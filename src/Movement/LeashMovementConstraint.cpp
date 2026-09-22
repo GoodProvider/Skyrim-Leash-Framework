@@ -39,6 +39,7 @@ namespace LeashFramework::Movement {
             float maxLength{};
             bool holder{};
             bool player{};
+            std::optional<bool> preventOverstretch;
         };
 
         struct Circle {
@@ -145,16 +146,15 @@ namespace LeashFramework::Movement {
         }
 
         void ConstrainHorizontalVelocity(std::span<const BoundarySample> a_samples, RE::NiPoint3& a_velocity, float a_deltaTime, float a_turn) {
-            const auto constrainHolder = preventHolderOverstretch;
             for (const auto& sample : a_samples) {
-                if (!sample.holder || constrainHolder) {
+                if (!sample.holder || sample.preventOverstretch.value_or(preventHolderOverstretch)) {
                     VisitCircles(sample, a_turn, [&](const Circle& a_circle) { ConstrainVelocity(a_velocity, a_circle, a_deltaTime); });
                 }
             }
             const auto step = a_velocity * a_deltaTime;
             float allowedStep = 1.0F;
             for (const auto& sample : a_samples) {
-                if (!sample.holder || constrainHolder) {
+                if (!sample.holder || sample.preventOverstretch.value_or(preventHolderOverstretch)) {
                     VisitCircles(sample, a_turn, [&](const Circle& a_circle) { allowedStep = std::min(allowedStep, AllowedStep(step, a_circle)); });
                 }
             }
@@ -280,10 +280,10 @@ namespace LeashFramework::Movement {
     }
 
     void UpdateHolderMovementConstraint(RE::MovementControllerNPC*& a_binding, RE::Actor& a_holder, const RE::NiPoint3& a_attachment,
-        const RE::NiPoint3& a_leanLimitAttachment, float a_ropeLength) {
+        const RE::NiPoint3& a_leanLimitAttachment, float a_ropeLength, std::optional<bool> a_preventOverstretch) {
         const auto settings = GetHolderMovementSettings();
         auto* controller = a_holder.GetActorRuntimeData().movementController.get();
-        if (!settings.preventOverstretch || !CanFilterMovement(a_holder) || !controller || controller->unk1C7 ||
+        if (!a_preventOverstretch.value_or(settings.preventOverstretch) || !CanFilterMovement(a_holder) || !controller || controller->unk1C7 ||
             !IsFinite(a_attachment) || !IsFinite(a_leanLimitAttachment) || !IsFinite(a_holder.GetPosition()) || !std::isfinite(a_holder.GetAngleZ()) ||
             !std::isfinite(a_ropeLength) || a_ropeLength <= 0.0F) {
             ClearLeashMovementConstraint(a_binding);
@@ -292,7 +292,7 @@ namespace LeashFramework::Movement {
 
         PublishBoundary(a_binding, controller, {.actorPosition = a_holder.GetPosition(), .attachmentOffset = a_attachment - a_holder.GetPosition(),
             .anchor = a_leanLimitAttachment, .heading = a_holder.GetAngleZ(), .ropeLength = std::max(a_ropeLength + settings.stretchAllowance, 0.001F), .holder = true,
-            .player = std::addressof(a_holder) == RE::PlayerCharacter::GetSingleton()});
+            .player = std::addressof(a_holder) == RE::PlayerCharacter::GetSingleton(), .preventOverstretch = a_preventOverstretch});
     }
 
     void ClearLeashMovementConstraint(RE::MovementControllerNPC*& a_binding) {

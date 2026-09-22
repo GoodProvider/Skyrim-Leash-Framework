@@ -27,7 +27,9 @@ namespace LeashFramework {
         void SetMaxLength(float a_length) noexcept;
         void SetRagdollOverride(std::optional<bool> a_enabled);
         void SetTeleportOverride(std::optional<bool> a_enabled);
+        void SetPreventOverstretchOverride(std::optional<bool> a_enabled);
         [[nodiscard]] bool IsRagdollEnabled() const;
+        [[nodiscard]] bool IsPreventOverstretchEnabled() const;
         bool ReleasePull();
         bool ReleaseRecovery();
         bool ReleaseControl();

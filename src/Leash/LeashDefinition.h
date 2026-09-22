@@ -33,6 +33,7 @@ namespace LeashFramework {
     struct LeashOverrides {
         std::optional<bool> ragdoll;
         std::optional<bool> teleport;
+        std::optional<bool> preventOverstretch;
     };
 
     struct LeashDefinition {

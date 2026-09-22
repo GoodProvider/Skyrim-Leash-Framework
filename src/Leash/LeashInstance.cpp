@@ -117,6 +117,17 @@ namespace LeashFramework {
         }
     }
 
+    void LeashInstance::SetPreventOverstretchOverride(std::optional<bool> a_enabled) {
+        _definition.overrides.preventOverstretch = a_enabled;
+        if (!IsPreventOverstretchEnabled()) {
+            Movement::ClearLeashMovementConstraint(_holderMovementBinding);
+        }
+    }
+
+    bool LeashInstance::IsPreventOverstretchEnabled() const {
+        return _definition.overrides.preventOverstretch.value_or(Movement::GetHolderMovementSettings().preventOverstretch);
+    }
+
     bool LeashInstance::IsRagdollEnabled() const {
         const auto leashed = _leashed.get();
         if (!leashed) {
@@ -223,9 +234,9 @@ namespace LeashFramework {
         }
         const auto* collarNode = holderOwnsMesh ? anchor->poseReference : _bones.front().get();
         _pullPoseController.Prepare(_pullPoseState, *leashed, collarNode, collarAnchor, poseLeasherAnchor, ropeLength, a_deltaTime, !forcedRecoveryActive);
-        if (holder && !forcedRecoveryActive && Movement::GetHolderMovementSettings().preventOverstretch) {
+        if (holder && !forcedRecoveryActive && IsPreventOverstretchEnabled()) {
             const auto leanLimitAttachment = _pullPoseController.GetLeanLimitAttachment(_pullPoseState, collarNode, collarAnchor, poseLeasherAnchor);
-            Movement::UpdateHolderMovementConstraint(_holderMovementBinding, *holder, poseLeasherAnchor, leanLimitAttachment, ropeLength);
+            Movement::UpdateHolderMovementConstraint(_holderMovementBinding, *holder, poseLeasherAnchor, leanLimitAttachment, ropeLength, _definition.overrides.preventOverstretch);
         } else {
             Movement::ClearLeashMovementConstraint(_holderMovementBinding);
         }

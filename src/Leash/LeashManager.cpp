@@ -433,6 +433,8 @@ namespace LeashFramework {
 
     bool LeashManager::SetTeleportOverride(RE::Actor* a_leashed, std::int32_t a_mode) { return SetOverride(a_leashed, a_mode, &LeashInstance::SetTeleportOverride); }
 
+    bool LeashManager::SetPreventOverstretchOverride(RE::Actor* a_leashed, std::int32_t a_mode) { return SetOverride(a_leashed, a_mode, &LeashInstance::SetPreventOverstretchOverride); }
+
     bool LeashManager::SetOverride(RE::Actor* a_leashed, std::int32_t a_mode, void (LeashInstance::*a_setter)(std::optional<bool>)) {
         if (!a_leashed || a_mode < -1 || a_mode > 1) {
             return false;
