@@ -6,53 +6,38 @@
 
 namespace LeashFramework::UI::SettingsPage {
     namespace {
-        using MenuLayout::Columns;
-        using MenuLayout::Defaults;
-        using MenuLayout::Field;
-        using MenuLayout::Heading;
-        using MenuLayout::Note;
-        using MenuLayout::Number;
-        using MenuLayout::Panel;
-        using MenuLayout::Slider;
-        using MenuLayout::Style;
-        using MenuLayout::Tab;
-        using MenuLayout::Toggle;
-        using MenuLayout::Vector;
+        using namespace MenuLayout;
 
-        void Behavior(Values a_settings) {
+        void Behavior(ModMenuSettings& a_settings) {
             Columns(
                 [&] {
-                    auto& behavior = a_settings.behavior;
-                    Panel("Camera & interaction", "Everyday behavior while leashed.", [&] {
+                    SettingsPanel("Camera & interaction", "Everyday behavior while leashed.", a_settings.frameHook, [](auto& behavior) {
                         Toggle("Free camera while AI-controlled", behavior.freeCameraWhileAIControlled, "Rotate the camera freely while AI Mode or forced walking controls player movement.");
                         Toggle("Suppress greetings while leashed", behavior.suppressGreetingsWhileLeashed, "Suppress greetings when the target actor or the player is leashed.");
-                    }, Defaults(behavior));
-                    auto& recovery = a_settings.recovery;
-                    Panel("Ragdoll recovery", "Physically pull actors back when they stray too far.", [&] {
+                    });
+                    SettingsPanel("Ragdoll recovery", "Physically pull actors back when they stray too far.", a_settings.recovery, [](auto& recovery) {
                         Toggle("Ragdoll NPCs", recovery.enableNPCs, "Allow forced ragdoll recovery for leashed NPCs.");
                         Toggle("Ragdoll player", recovery.enablePlayer, "Allow forced ragdoll recovery for the leashed player.");
                         ImGuiMCP::BeginDisabled(!recovery.enableNPCs && !recovery.enablePlayer);
                         Slider("Trigger distance multiplier", recovery.distanceMultiplier, 1.0F, 10.0F,
                             "Triggers beyond maximum leash length multiplied by this value. Ragdoll recovery takes priority over normal pulling.", "%.2fx");
                         ImGuiMCP::EndDisabled();
-                    }, Defaults(recovery));
+                    });
                 },
                 [&] {
-                    auto& teleport = a_settings.teleport;
-                    Panel("Teleport recovery", "Let NPC holders bring separated actors back after a short delay.", [&] {
+                    SettingsPanel("Teleport recovery", "Let NPC holders bring separated actors back after a short delay.", a_settings.teleport, [](auto& teleport) {
                         Slider("Grace period", teleport.gracePeriod, 0.0F, 30.0F, "How long separation must persist before an eligible NPC holder teleports the leashed actor.", "%.2f s");
                         Number("Player: extra distance", teleport.playerDistance, "Allowed distance beyond maximum leash length before an NPC holder teleports a leashed, AI-driven player.", 10.0F, 100.0F, "%.1f units");
                         Number("NPCs: extra distance", teleport.npcDistance, "Allowed distance beyond maximum leash length before an NPC holder teleports a leashed NPC.", 10.0F, 100.0F, "%.1f units");
                         Note("Set a distance to 0 or less to disable NPC-holder teleports for that actor type, including load doors.");
-                    }, Defaults(teleport));
+                    });
                 });
         }
 
-        void Movement(Values a_settings) {
+        void Movement(ModMenuSettings& a_settings) {
             Columns(
                 [&] {
-                    auto& movement = a_settings.locomotion;
-                    Panel("Locomotion", "Control catch-up speed and how player input affects pulling.", [&] {
+                    SettingsPanel("Locomotion", "Control catch-up speed and how player input affects pulling.", a_settings.locomotion, [](auto& movement) {
                         Slider("Forward assistance", movement.forwardAssistance, 0.0F, 3.0F,
                             "Extra catch-up speed when the player presses toward the pull path. Zero disables the boost. A speed of 2.00 is the running-speed reference.");
                         Slider("Backward resistance", movement.backwardResistance, 0.0F, 3.0F,
@@ -67,9 +52,8 @@ namespace LeashFramework::UI::SettingsPage {
                             "Preferred gap while an actor holder moves: 0 targets minimum leash length, 1 targets maximum. With lengths 200 and 300, 0.40 targets 240 units. Does not change "
                             "pull/release thresholds or world anchors.");
                         Slider("Distance response rate", movement.distanceResponseRate, 0.1F, 10.0F, "Higher values close the gap faster. Arrival braking and maximum catch-up speed still apply.");
-                    }, Defaults(movement));
-                    auto& holderMovement = a_settings.holderMovement;
-                    Panel("Holder movement", "Keep metal chains from stretching as the holder walks away.", [&] {
+                    });
+                    SettingsPanel("Holder movement", "Keep metal chains from stretching as the holder walks away.", a_settings.holderMovement, [](auto& holderMovement) {
                         Toggle("Prevent holder overstretch", holderMovement.preventOverstretch,
                             "Limit player and NPC holder movement at the chain's actual length plus the leashed actor's maximum procedural lean. "
                             "Movement toward the actor or around the leash limit remains available. Every held leash contributes a limit.");
@@ -78,11 +62,10 @@ namespace LeashFramework::UI::SettingsPage {
                             "Adjust the holder's movement limit in Skyrim units. Positive values allow extra extension; negative values restrict movement earlier. Zero keeps the normal limit.", "%.0f units");
                         ImGuiMCP::EndDisabled();
                         Note("When leaning is disabled or unavailable, the limit uses chain length plus the allowance. Does not constrain the holder during forced recovery.");
-                    }, Defaults(holderMovement));
+                    });
                 },
                 [&] {
-                    auto& pose = a_settings.pose;
-                    Panel("Pulling pose", "Lean into a taut leash with a procedural spine pose.", [&] {
+                    SettingsPanel("Pulling pose", "Lean into a taut leash with a procedural spine pose.", a_settings.pullPose, [](auto& pose) {
                         Toggle("Enable procedural pulling pose", pose.enabled, "Apply a procedural leaning pose while the leash is under tension.");
                         ImGuiMCP::BeginDisabled(!pose.enabled);
                         Slider("Minimum pull strength", pose.minimumStrength, 0.0F, 1.0F, "Minimum pose strength as tension builds. Maximum strength cannot be lower than this value.");
@@ -97,7 +80,7 @@ namespace LeashFramework::UI::SettingsPage {
                             "Start leaning before the chain is fully taut. 0.03 reserves 3% of its actual length, capped at 8 units. Zero disables the reserve. Does not shorten the chain "
                             "or change the movement pull threshold.", "%.3f");
                         ImGuiMCP::EndDisabled();
-                    }, Defaults(pose));
+                    });
                 });
         }
 
@@ -166,26 +149,14 @@ namespace LeashFramework::UI::SettingsPage {
                 Note("Actor collision is off. You can still edit the shapes below.");
             }
             if (ImGuiMCP::BeginTabBar("BodyProfiles")) {
-                if (ImGuiMCP::BeginTabItem("Male")) {
-                    ImGuiMCP::PushID("Male");
-                    BodyShapes(a_settings.actorBodyCollision.male);
-                    ImGuiMCP::PopID();
-                    ImGuiMCP::EndTabItem();
-                }
-                if (ImGuiMCP::BeginTabItem("Female")) {
-                    ImGuiMCP::PushID("Female");
-                    BodyShapes(a_settings.actorBodyCollision.female, &a_settings.actorBodyCollision.femaleBreast);
-                    ImGuiMCP::PopID();
-                    ImGuiMCP::EndTabItem();
-                }
+                TabItem("Male", [&] { BodyShapes(a_settings.actorBodyCollision.male); });
+                TabItem("Female", [&] { BodyShapes(a_settings.actorBodyCollision.female, &a_settings.actorBodyCollision.femaleBreast); });
                 ImGuiMCP::EndTabBar();
             }
         }
-
-
     }
 
-    bool Render(Values a_settings) {
+    bool Render(ModMenuSettings& a_settings) {
         const Style style;
         ImGuiMCP::PushID("LeashSettings");
         const bool resetAll = Heading("LEASH FRAMEWORK", "Reset all settings", "Resets all saved settings, including Debug settings, to their defaults and saves immediately.");

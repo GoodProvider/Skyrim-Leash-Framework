@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <initializer_list>
 #include <string>
 #include <type_traits>
@@ -14,33 +15,33 @@
 namespace LeashFramework::UI::MenuLayout {
     inline constexpr ImGuiMCP::ImVec4 kAccent{0.72F, 0.16F, 0.14F, 1.0F};
 
-    inline const std::array kColors{
-        std::pair{ImGuiMCP::ImGuiCol_Text, ImGuiMCP::ImVec4{0.93F, 0.93F, 0.90F, 1.0F}},
-        std::pair{ImGuiMCP::ImGuiCol_TextDisabled, ImGuiMCP::ImVec4{0.66F, 0.67F, 0.67F, 1.0F}},
+    inline constexpr auto kColors = std::to_array<std::pair<ImGuiMCP::ImGuiCol, ImGuiMCP::ImVec4>>({
+        {ImGuiMCP::ImGuiCol_Text, {0.93F, 0.93F, 0.90F, 1.0F}},
+        {ImGuiMCP::ImGuiCol_TextDisabled, {0.66F, 0.67F, 0.67F, 1.0F}},
 
-        std::pair{ImGuiMCP::ImGuiCol_ChildBg, ImGuiMCP::ImVec4{0.04F, 0.04F, 0.04F, 0.65F}},
-        std::pair{ImGuiMCP::ImGuiCol_Border, ImGuiMCP::ImVec4{0.52F, 0.16F, 0.14F, 0.28F}},
+        {ImGuiMCP::ImGuiCol_ChildBg, {0.04F, 0.04F, 0.04F, 0.65F}},
+        {ImGuiMCP::ImGuiCol_Border, {0.52F, 0.16F, 0.14F, 0.28F}},
 
-        std::pair{ImGuiMCP::ImGuiCol_FrameBg, ImGuiMCP::ImVec4{0.13F, 0.11F, 0.11F, 0.90F}},
-        std::pair{ImGuiMCP::ImGuiCol_FrameBgHovered, ImGuiMCP::ImVec4{0.24F, 0.10F, 0.09F, 1.0F}},
-        std::pair{ImGuiMCP::ImGuiCol_FrameBgActive, ImGuiMCP::ImVec4{0.32F, 0.10F, 0.09F, 1.0F}},
+        {ImGuiMCP::ImGuiCol_FrameBg, {0.13F, 0.11F, 0.11F, 0.90F}},
+        {ImGuiMCP::ImGuiCol_FrameBgHovered, {0.24F, 0.10F, 0.09F, 1.0F}},
+        {ImGuiMCP::ImGuiCol_FrameBgActive, {0.32F, 0.10F, 0.09F, 1.0F}},
 
-        std::pair{ImGuiMCP::ImGuiCol_CheckMark, kAccent},
-        std::pair{ImGuiMCP::ImGuiCol_SliderGrab, kAccent},
-        std::pair{ImGuiMCP::ImGuiCol_SliderGrabActive, ImGuiMCP::ImVec4{0.92F, 0.22F, 0.18F, 1.0F}},
+        {ImGuiMCP::ImGuiCol_CheckMark, kAccent},
+        {ImGuiMCP::ImGuiCol_SliderGrab, kAccent},
+        {ImGuiMCP::ImGuiCol_SliderGrabActive, {0.92F, 0.22F, 0.18F, 1.0F}},
 
-        std::pair{ImGuiMCP::ImGuiCol_Button, ImGuiMCP::ImVec4{0.21F, 0.08F, 0.08F, 0.85F}},
-        std::pair{ImGuiMCP::ImGuiCol_ButtonHovered, ImGuiMCP::ImVec4{0.36F, 0.10F, 0.09F, 1.0F}},
-        std::pair{ImGuiMCP::ImGuiCol_ButtonActive, ImGuiMCP::ImVec4{0.47F, 0.11F, 0.10F, 1.0F}},
+        {ImGuiMCP::ImGuiCol_Button, {0.21F, 0.08F, 0.08F, 0.85F}},
+        {ImGuiMCP::ImGuiCol_ButtonHovered, {0.36F, 0.10F, 0.09F, 1.0F}},
+        {ImGuiMCP::ImGuiCol_ButtonActive, {0.47F, 0.11F, 0.10F, 1.0F}},
 
-        std::pair{ImGuiMCP::ImGuiCol_Tab, ImGuiMCP::ImVec4{0.12F, 0.09F, 0.09F, 0.90F}},
-        std::pair{ImGuiMCP::ImGuiCol_TabHovered, ImGuiMCP::ImVec4{0.36F, 0.10F, 0.09F, 1.0F}},
-        std::pair{ImGuiMCP::ImGuiCol_TabActive, ImGuiMCP::ImVec4{0.29F, 0.08F, 0.07F, 1.0F}},
+        {ImGuiMCP::ImGuiCol_Tab, {0.12F, 0.09F, 0.09F, 0.90F}},
+        {ImGuiMCP::ImGuiCol_TabHovered, {0.36F, 0.10F, 0.09F, 1.0F}},
+        {ImGuiMCP::ImGuiCol_TabActive, {0.29F, 0.08F, 0.07F, 1.0F}},
 
-        std::pair{ImGuiMCP::ImGuiCol_Header, ImGuiMCP::ImVec4{0.27F, 0.08F, 0.07F, 0.85F}},
-        std::pair{ImGuiMCP::ImGuiCol_HeaderHovered, ImGuiMCP::ImVec4{0.38F, 0.10F, 0.09F, 1.0F}},
-        std::pair{ImGuiMCP::ImGuiCol_HeaderActive, ImGuiMCP::ImVec4{0.47F, 0.11F, 0.10F, 1.0F}},
-    };
+        {ImGuiMCP::ImGuiCol_Header, {0.27F, 0.08F, 0.07F, 0.85F}},
+        {ImGuiMCP::ImGuiCol_HeaderHovered, {0.38F, 0.10F, 0.09F, 1.0F}},
+        {ImGuiMCP::ImGuiCol_HeaderActive, {0.47F, 0.11F, 0.10F, 1.0F}},
+    });
 
     struct Style {
         Style() {
@@ -114,11 +115,6 @@ namespace LeashFramework::UI::MenuLayout {
         return pressed;
     }
 
-    template <class Settings>
-    auto Defaults(Settings& a_settings) {
-        return [&a_settings] { a_settings = Settings{}; };
-    }
-
     template <class Content, class Action = std::nullptr_t>
     void Panel(const char* a_title, const char* a_description, Content a_content, Action a_action = nullptr, const char* a_actionLabel = "Reset",
         const char* a_actionHelp = "Restores the defaults for this section.") {
@@ -133,6 +129,11 @@ namespace LeashFramework::UI::MenuLayout {
         ImGuiMCP::EndChild();
     }
 
+    template <class Settings, class Content>
+    void SettingsPanel(const char* a_title, const char* a_description, Settings& a_settings, Content a_content) {
+        Panel(a_title, a_description, [&] { a_content(a_settings); }, [&] { a_settings = Settings{}; });
+    }
+
     template <class... Panels>
     void Columns(Panels... a_panels) {
         ImGuiMCP::ImVec2 available;
@@ -145,9 +146,10 @@ namespace LeashFramework::UI::MenuLayout {
         }
     }
 
-    inline void Toggle(const char* a_label, bool& a_value, const char* a_help) {
-        ImGuiMCP::Checkbox(a_label, &a_value);
+    inline bool Toggle(const char* a_label, bool& a_value, const char* a_help) {
+        const bool changed = ImGuiMCP::Checkbox(a_label, &a_value);
         Help(a_help);
+        return changed;
     }
 
     template <class Widget>
@@ -170,13 +172,41 @@ namespace LeashFramework::UI::MenuLayout {
         Field(a_label, [&](const char* a_id) { return ImGuiMCP::InputFloat(a_id, &a_value, a_step, a_fastStep, a_format); }, a_help);
     }
 
-    inline void Vector(const char* a_label, RE::NiPoint3& a_value, const char* a_help) {
+    inline void Vector(const char* a_label, RE::NiPoint3& a_value, const char* a_help = nullptr) {
         Field(a_label, [&](const char* a_id) { return ImGuiMCP::InputFloat3(a_id, &a_value.x, "%.2f"); }, a_help);
     }
 
     template <std::size_t N>
-    bool Choice(const char* a_label, int& a_selected, const std::array<const char*, N>& a_choices) {
-        return Field(a_label, [&](const char* a_id) { return ImGuiMCP::Combo(a_id, &a_selected, a_choices.data(), static_cast<int>(N)); });
+    bool Text(const char* a_label, char (&a_value)[N], const char* a_help = nullptr, const char* a_hint = nullptr) {
+        return Field(a_label, [&](const char* a_id) {
+            return a_hint ? ImGuiMCP::InputTextWithHint(a_id, a_hint, a_value, N) : ImGuiMCP::InputText(a_id, a_value, N);
+        }, a_help);
+    }
+
+    template <class T, std::size_t N>
+        requires (std::is_enum_v<T> || std::is_same_v<T, bool> || std::is_same_v<T, int>)
+    bool Choice(const char* a_label, T& a_selected, const std::array<const char*, N>& a_choices) {
+        static_assert(!std::is_same_v<T, bool> || N == 2);
+        auto index = static_cast<int>(a_selected);
+        const bool changed = Field(a_label, [&](const char* a_id) { return ImGuiMCP::Combo(a_id, &index, a_choices.data(), static_cast<int>(N)); });
+        if (changed) {
+            a_selected = static_cast<T>(index);
+        }
+        return changed;
+    }
+
+    inline bool ChoiceItem(const char* a_label, std::uint32_t a_value, std::uint32_t& a_selected) {
+        ImGuiMCP::PushID(static_cast<int>(a_value));
+        const bool selected = a_value == a_selected;
+        const bool changed = ImGuiMCP::Selectable(a_label, selected);
+        if (changed) {
+            a_selected = a_value;
+        }
+        if (selected) {
+            ImGuiMCP::SetItemDefaultFocus();
+        }
+        ImGuiMCP::PopID();
+        return changed;
     }
 
     inline void Columns(const char* a_id, float a_minimumWidthInEms, std::initializer_list<void (*)()> a_panels) {
@@ -189,6 +219,16 @@ namespace LeashFramework::UI::MenuLayout {
                 panel();
             }
             ImGuiMCP::EndTable();
+        }
+    }
+
+    template <class Content>
+    void TabItem(const char* a_label, Content a_content) {
+        if (ImGuiMCP::BeginTabItem(a_label)) {
+            ImGuiMCP::PushID(a_label);
+            a_content();
+            ImGuiMCP::PopID();
+            ImGuiMCP::EndTabItem();
         }
     }
 
