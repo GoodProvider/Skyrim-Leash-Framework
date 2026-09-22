@@ -111,7 +111,8 @@ namespace LeashFramework::UI::SettingsPage {
         }
 
         void Capsule(const char* a_title, const char* a_bone, Physics::ActorBodyCapsuleSettings& a_settings) {
-            Panel(a_title, a_bone, [&] {
+            Panel(a_title, nullptr, [&] {
+                NoteRaw(a_bone);
                 Vector("Local offset (X / Y / Z)", a_settings.offset, "Offset in bone-local coordinates.");
                 Number("Radius", a_settings.radius, "Capsule radius in Skyrim units.", 0.25F, 1.0F);
                 Number("Width", a_settings.width, "Distance between capsule cap centers along the bone's local X axis.", 0.5F, 2.0F);

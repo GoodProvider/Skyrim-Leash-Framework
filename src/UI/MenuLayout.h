@@ -2,6 +2,7 @@
 
 #include "../PCH.h"
 #include "../../include/SKSEMenuFramework.h"
+#include "Locale.h"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +10,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -64,42 +66,52 @@ namespace LeashFramework::UI::MenuLayout {
         }
     };
 
-    inline void Note(const char* a_text) {
+    inline void NoteRaw(const char* a_text) {
         ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_Text, *ImGuiMCP::GetStyleColorVec4(ImGuiMCP::ImGuiCol_TextDisabled));
         ImGuiMCP::TextWrapped("%s", a_text);
         ImGuiMCP::PopStyleColor();
     }
 
+    inline void Note(const char* a_text) { NoteRaw(Locale::Text(a_text)); }
+
+    inline bool Button(const char* a_label, const ImGuiMCP::ImVec2& a_size = {0.0F, 0.0F}, const char* a_display = nullptr) {
+        return ImGuiMCP::Button(Locale::Label(a_label, a_display).c_str(), a_size);
+    }
+
     inline void Help(const char* a_text, bool a_labelHovered = false) {
         if (a_text && (a_labelHovered || ImGuiMCP::IsItemHovered(ImGuiMCP::ImGuiHoveredFlags_AllowWhenDisabled)) && ImGuiMCP::BeginTooltip()) {
             ImGuiMCP::PushTextWrapPos(ImGuiMCP::GetFontSize() * 26.0F);
-            ImGuiMCP::TextUnformatted(a_text);
+            ImGuiMCP::TextUnformatted(Locale::Text(a_text));
             ImGuiMCP::PopTextWrapPos();
             ImGuiMCP::EndTooltip();
         }
     }
 
-    inline void Title(const char* a_title, const char* a_description = nullptr) {
+    inline void Title(std::string_view a_title, const char* a_description = nullptr) {
+        a_description = Locale::Text(a_description);
         ImGuiMCP::ImVec2 available;
         ImGuiMCP::GetContentRegionAvail(&available);
         ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_Text, kAccent);
-        ImGuiMCP::TextWrapped("%s", a_title);
+        ImGuiMCP::TextWrapped("%.*s", static_cast<int>(a_title.size()), a_title.data());
         ImGuiMCP::PopStyleColor();
         if (a_description && a_description[0] != '\0') {
             ImGuiMCP::ImVec2 titleSize;
             ImGuiMCP::ImVec2 descriptionSize;
-            ImGuiMCP::CalcTextSize(&titleSize, a_title, nullptr, false, -1.0F);
+            ImGuiMCP::CalcTextSize(&titleSize, a_title.data(), a_title.data() + a_title.size(), false, -1.0F);
             ImGuiMCP::CalcTextSize(&descriptionSize, a_description, nullptr, false, -1.0F);
             const auto em = ImGuiMCP::GetFontSize();
             const auto gap = em * 0.65F;
             if (titleSize.x + gap + std::min(descriptionSize.x, em * 12.0F) <= available.x) {
                 ImGuiMCP::SameLine(0.0F, gap);
             }
-            Note(a_description);
+            NoteRaw(a_description);
         }
     }
 
-    inline bool Heading(const char* a_title, const char* a_button, const char* a_help = "Restores the defaults for this section.", const char* a_description = nullptr) {
+    inline void Title(const char* a_title, const char* a_description = nullptr) { Title(std::string_view{Locale::Text(a_title)}, a_description); }
+
+    template <class TitleText>
+    bool Heading(TitleText a_title, const char* a_button, const char* a_help = "Restores the defaults for this section.", const char* a_description = nullptr) {
         bool pressed{};
         if (ImGuiMCP::BeginTable("Heading", 2, ImGuiMCP::ImGuiTableFlags_SizingStretchProp)) {
             ImGuiMCP::TableSetupColumn("Title", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch);
@@ -108,7 +120,7 @@ namespace LeashFramework::UI::MenuLayout {
             ImGuiMCP::AlignTextToFramePadding();
             Title(a_title, a_description);
             ImGuiMCP::TableNextColumn();
-            pressed = ImGuiMCP::Button(a_button);
+            pressed = Button(a_button);
             Help(a_help);
             ImGuiMCP::EndTable();
         }
@@ -147,7 +159,7 @@ namespace LeashFramework::UI::MenuLayout {
     }
 
     inline bool Toggle(const char* a_label, bool& a_value, const char* a_help) {
-        const bool changed = ImGuiMCP::Checkbox(a_label, &a_value);
+        const bool changed = ImGuiMCP::Checkbox(Locale::Label(a_label).c_str(), &a_value);
         Help(a_help);
         return changed;
     }
@@ -155,7 +167,7 @@ namespace LeashFramework::UI::MenuLayout {
     template <class Widget>
     bool Field(const char* a_label, Widget a_widget, const char* a_help = nullptr) {
         ImGuiMCP::PushID(a_label);
-        ImGuiMCP::TextUnformatted(a_label);
+        ImGuiMCP::TextUnformatted(Locale::Text(a_label));
         const bool labelHovered = ImGuiMCP::IsItemHovered(ImGuiMCP::ImGuiHoveredFlags_AllowWhenDisabled);
         ImGuiMCP::SetNextItemWidth(-1.0F);
         const bool changed = a_widget("##Value");
@@ -165,11 +177,11 @@ namespace LeashFramework::UI::MenuLayout {
     }
 
     inline void Slider(const char* a_label, float& a_value, float a_minimum, float a_maximum, const char* a_help, const char* a_format = "%.2f") {
-        Field(a_label, [&](const char* a_id) { return ImGuiMCP::SliderFloat(a_id, &a_value, a_minimum, a_maximum, a_format, ImGuiMCP::ImGuiSliderFlags_AlwaysClamp); }, a_help);
+        Field(a_label, [&](const char* a_id) { return ImGuiMCP::SliderFloat(a_id, &a_value, a_minimum, a_maximum, Locale::FloatFormat(a_format), ImGuiMCP::ImGuiSliderFlags_AlwaysClamp); }, a_help);
     }
 
     inline void Number(const char* a_label, float& a_value, const char* a_help, float a_step = 0.1F, float a_fastStep = 1.0F, const char* a_format = "%.2f") {
-        Field(a_label, [&](const char* a_id) { return ImGuiMCP::InputFloat(a_id, &a_value, a_step, a_fastStep, a_format); }, a_help);
+        Field(a_label, [&](const char* a_id) { return ImGuiMCP::InputFloat(a_id, &a_value, a_step, a_fastStep, Locale::FloatFormat(a_format)); }, a_help);
     }
 
     inline void Vector(const char* a_label, RE::NiPoint3& a_value, const char* a_help = nullptr) {
@@ -179,7 +191,7 @@ namespace LeashFramework::UI::MenuLayout {
     template <std::size_t N>
     bool Text(const char* a_label, char (&a_value)[N], const char* a_help = nullptr, const char* a_hint = nullptr) {
         return Field(a_label, [&](const char* a_id) {
-            return a_hint ? ImGuiMCP::InputTextWithHint(a_id, a_hint, a_value, N) : ImGuiMCP::InputText(a_id, a_value, N);
+            return a_hint ? ImGuiMCP::InputTextWithHint(a_id, Locale::Text(a_hint), a_value, N) : ImGuiMCP::InputText(a_id, a_value, N);
         }, a_help);
     }
 
@@ -188,7 +200,9 @@ namespace LeashFramework::UI::MenuLayout {
     bool Choice(const char* a_label, T& a_selected, const std::array<const char*, N>& a_choices) {
         static_assert(!std::is_same_v<T, bool> || N == 2);
         auto index = static_cast<int>(a_selected);
-        const bool changed = Field(a_label, [&](const char* a_id) { return ImGuiMCP::Combo(a_id, &index, a_choices.data(), static_cast<int>(N)); });
+        std::array<const char*, N> choices;
+        std::ranges::transform(a_choices, choices.begin(), [](const char* a_choice) { return Locale::Text(a_choice); });
+        const bool changed = Field(a_label, [&](const char* a_id) { return ImGuiMCP::Combo(a_id, &index, choices.data(), static_cast<int>(N)); });
         if (changed) {
             a_selected = static_cast<T>(index);
         }
@@ -224,7 +238,7 @@ namespace LeashFramework::UI::MenuLayout {
 
     template <class Content>
     void TabItem(const char* a_label, Content a_content) {
-        if (ImGuiMCP::BeginTabItem(a_label)) {
+        if (ImGuiMCP::BeginTabItem(Locale::Label(a_label).c_str())) {
             ImGuiMCP::PushID(a_label);
             a_content();
             ImGuiMCP::PopID();
@@ -233,8 +247,8 @@ namespace LeashFramework::UI::MenuLayout {
     }
 
     template <class Content>
-    void Tab(const char* a_label, Content a_content) {
-        if (ImGuiMCP::BeginTabItem(a_label)) {
+    void Tab(const char* a_label, Content a_content, const char* a_display = nullptr) {
+        if (ImGuiMCP::BeginTabItem(Locale::Label(a_label, a_display).c_str())) {
             ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_ChildBg, ImGuiMCP::ImVec4{0.0F, 0.0F, 0.0F, 0.0F});
             const bool visible = ImGuiMCP::BeginChild(a_label);
             ImGuiMCP::PopStyleColor();
@@ -249,7 +263,7 @@ namespace LeashFramework::UI::MenuLayout {
     inline void Feedback(const std::string& a_message) {
         if (!a_message.empty()) {
             ImGuiMCP::Spacing();
-            ImGuiMCP::TextColored(kAccent, "Last result");
+            ImGuiMCP::TextColored(kAccent, "%s", Locale::Text("Last result"));
             ImGuiMCP::TextWrapped("%s", a_message.c_str());
         }
     }

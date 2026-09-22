@@ -10,6 +10,7 @@
 #include "../Hooks/FrameHook.h"
 #include "../Leash/LeashManager.h"
 #include "DebugPage.h"
+#include "Locale.h"
 #include "MenuSettings.h"
 #include "SettingsPage.h"
 
@@ -100,14 +101,15 @@ namespace LeashFramework::UI::ModMenu {
 
     void Register() {
         LoadSettings();
+        Locale::Load();
         if (!SKSEMenuFramework::IsInstalled()) {
             SKSE::log::info("SKSE Menu Framework is not installed; mod menu disabled");
             return;
         }
 
-        SKSEMenuFramework::SetSection("Leash Framework");
-        SKSEMenuFramework::AddSectionItem("Settings", RenderSettingsPage);
-        SKSEMenuFramework::AddSectionItem("Debug", RenderDebugPage);
+        SKSEMenuFramework::SetSection(Locale::Text("Leash Framework"));
+        SKSEMenuFramework::AddSectionItem(Locale::Text("Settings"), RenderSettingsPage);
+        SKSEMenuFramework::AddSectionItem(Locale::Text("Debug"), RenderDebugPage);
         menuEvent = new SKSEMenuFramework::Model::Event(OnMenuEvent);
         SKSE::log::info("Registered Leash Framework mod menu");
     }
