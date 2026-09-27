@@ -3,13 +3,15 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
-#include <string_view>
+#include <utility>
 
 #include "../Movement/DirectLocomotion.h"
 #include "../Movement/LeashMovementConstraint.h"
 #include "../PCH.h"
 #include "../Recovery/ForcedRecoveryController.h"
+#include "EquippedRope.h"
 #include "PullController.h"
+#include "StandaloneRope.h"
 
 namespace LeashFramework {
     namespace {
@@ -30,36 +32,17 @@ namespace LeashFramework {
             return worldSpace && worldSpace == leashedCell->GetRuntimeData().worldSpace;
         }
 
-        void CollectLeashBones(RE::NiAVObject* a_object, std::string_view a_match, std::vector<RE::NiPointer<RE::NiAVObject>>& a_bones) {
-            if (!a_object) {
-                return;
-            }
+        struct RopeEnd {
+            RE::NiPoint3 position;
+            const RE::NiAVObject* node{};
+            const LeashInstance* poseSource{};
+        };
 
-            const std::string_view name = a_object->name;
-            if (name.contains(a_match)) {
-                a_bones.emplace_back(a_object);
+        [[nodiscard]] std::unique_ptr<RopeMesh> MakeRopeMesh(const LeashDefinition& a_definition) {
+            if (std::holds_alternative<StandaloneMesh>(a_definition.mesh)) {
+                return std::make_unique<StandaloneRope>(a_definition);
             }
-
-            auto* node = a_object->AsNode();
-            if (!node) {
-                return;
-            }
-
-            for (const auto& child : node->GetChildren()) {
-                if (child) {
-                    CollectLeashBones(child.get(), a_match, a_bones);
-                }
-            }
-        }
-
-        // Detached nodes remain alive through NiPointer but no longer lead to the actor root through parent links
-        [[nodiscard]] bool IsDescendantOf(const RE::NiAVObject* a_object, const RE::NiAVObject* a_root) {
-            for (auto* object = a_object; object; object = object->parent) {
-                if (object == a_root) {
-                    return true;
-                }
-            }
-            return false;
+            return std::make_unique<EquippedRope>(a_definition);
         }
 
         [[nodiscard]] RE::NiMatrix3 AlignRotation(const RE::NiMatrix3& a_neutralRotation, RE::NiPoint3 a_from, RE::NiPoint3 a_to) {
@@ -87,13 +70,8 @@ namespace LeashFramework {
         }
     }  // namespace
 
-    LeashInstance::LeashInstance(LeashDefinition a_definition, PullController& a_pullController, Recovery::ForcedRecoveryController& a_recoveryController, Animation::PullPoseController& a_pullPoseController,
-        std::unique_ptr<StandaloneRope> a_standalone)
-        : _definition(std::move(a_definition)), _anchor(_definition), _standalone(std::move(a_standalone)), _pullController(a_pullController), _recoveryController(a_recoveryController), _pullPoseController(a_pullPoseController) {
-        if (!_standalone && _definition.standalone) {
-            // Save loading can precede actor 3D and cell attachment; the first simulatable tick binds the NIF.
-            _standalone = std::make_unique<StandaloneRope>(*_definition.standalone);
-        }
+    LeashInstance::LeashInstance(LeashDefinition a_definition, PullController& a_pullController, Recovery::ForcedRecoveryController& a_recoveryController, Animation::PullPoseController& a_pullPoseController)
+        : _definition(std::move(a_definition)), _anchor(_definition), _mesh(MakeRopeMesh(_definition)), _pullController(a_pullController), _recoveryController(a_recoveryController), _pullPoseController(a_pullPoseController) {
         if (auto* holder = RE::TESForm::LookupByID<RE::Actor>(_definition.holderFormID)) {
             _holder = holder->GetHandle();
         }
@@ -104,11 +82,12 @@ namespace LeashFramework {
 
     const LeashDefinition& LeashInstance::GetDefinition() const { return _definition; }
 
-    bool LeashInstance::IsStandalone() const { return _standalone != nullptr; }
+    RE::NiAVObject* LeashInstance::GetMeshRoot() const { return _mesh->GetRoot(); }
 
-    RE::NiAVObject* LeashInstance::GetStandaloneRoot() const { return _standalone ? _standalone->GetRoot() : nullptr; }
-
-    void LeashInstance::ResetMesh() { ResetBinding(); }
+    bool LeashInstance::BindMesh() {
+        const auto meshOwner = (_definition.HolderOwnsMesh() ? _holder : _leashed).get();
+        return meshOwner && _mesh->Bind(*meshOwner) != LeashAnchor::BindResult::kFailed;
+    }
 
     void LeashInstance::SetMinLength(float a_length) noexcept { _definition.minLength = a_length; }
 
@@ -163,7 +142,6 @@ namespace LeashFramework {
         return releasedPull || releasedRecovery;
     }
 
-    // Todo: Clean up this constant statement swap jank. Such logic should be abstracted
     void LeashInstance::Tick(float a_deltaTime, const Physics::SimulationSettings& a_settings, const Physics::ActorBodyCollision* a_actorCollision, bool a_allowForcedRecovery,
         const LeashInstance* a_holderPoseSource) {
         LF_PROFILE_SCOPE("Leash/Tick");
@@ -171,60 +149,40 @@ namespace LeashFramework {
             return;
         }
 
-        auto leashed = _leashed.get();
-        auto holder = _holder.get();
-        auto* attachmentActor = _definition.meshOwner == LeashMeshOwner::kHolder ? leashed.get() : holder.get();
-        const auto invalidate = [&] {
-            ReleaseControl();
-            ResetSimulation();
-            if (_standalone) {
-                ResetBinding();
-            }
-            _exceeded = false;
-        };
-        const auto holderOwnsMesh = _definition.meshOwner == LeashMeshOwner::kHolder;
-        auto* meshOwner = holderOwnsMesh ? holder.get() : leashed.get();
-        if (!leashed || !meshOwner || (!_standalone && !Bind(*meshOwner))) {
-            invalidate();
+        const auto frame = Bind();
+        if (!frame) {
+            Invalidate();
             return;
         }
-
-        const auto anchorBindResult = _anchor.Bind(attachmentActor, holder.get());
-        if (anchorBindResult == LeashAnchor::BindResult::kFailed) {
-            invalidate();
-            return;
-        }
-        // The anchor bound successfully, but its runtime scene binding is new or different from the cached binding (Like eequipment changed, etc)
-        if (anchorBindResult == LeashAnchor::BindResult::kChanged) {
+        // A new or replaced scene binding (equipment changed, etc.) makes the cached simulation meaningless
+        if (frame->meshChanged || frame->anchorChanged) {
             ReleaseControl();
             ResetSimulation();
         }
-        _anchor.ApplyPose();
-        const auto anchor = _anchor.GetSample(attachmentActor);
-        if (!anchor) {
-            invalidate();
-            return;
-        }
-        const auto pullGoal = holder ? holder->GetPosition() : anchor->position;
-        auto* pullGoalCell = holder ? holder->GetParentCell() : anchor->cell;
-        if (!CanSimulateTogether(pullGoalCell, *leashed)) {
-            invalidate();
-            return;
-        }
-        if (_standalone && !Bind(*leashed)) {
-            invalidate();
-            return;
+        auto& leashed = *frame->leashed;
+        auto* holder = frame->holder.get();
+        const auto& anchor = frame->anchor;
+        if (frame->meshChanged && _pullController.DiagnosticsEnabled()) {
+            Movement::LogDirectLocomotionState(leashed, "leash tick after bind");
         }
 
-        const auto newlyBound = _neutralPositions.empty();
-        if (newlyBound && _pullController.DiagnosticsEnabled()) {
-            Movement::LogDirectLocomotionState(*leashed, "leash tick after bind");
-        }
         ReadNeutralPose();
         const auto ropeLength = std::accumulate(_segmentLengths.begin(), _segmentLengths.end(), 0.0F);
-        const auto& collarAnchor = holderOwnsMesh ? anchor->position : _neutralPositions.front();
-        const auto& leasherAnchor = holderOwnsMesh ? _neutralPositions.front() : anchor->position;
-        const auto anchorDistance = collarAnchor.GetDistance(leasherAnchor);
+        // Bone 0 sits on the mesh owner, so a holder-owned rope reaches the collar at its free end
+        const auto holderOwnsMesh = _definition.HolderOwnsMesh();
+        const RopeEnd meshEnd{_neutralPositions.front(), &_mesh->GetPoseReference(0), holderOwnsMesh ? a_holderPoseSource : this};
+        const RopeEnd freeEnd{anchor.position, anchor.poseReference, holderOwnsMesh ? this : a_holderPoseSource};
+        const auto [collar, leasher] = holderOwnsMesh ? std::pair{freeEnd, meshEnd} : std::pair{meshEnd, freeEnd};
+        const auto posed = [](const RopeEnd& a_end) {
+            auto position = a_end.position;
+            if (a_end.poseSource && a_end.node) {
+                auto rotation = a_end.node->world.rotate;
+                a_end.poseSource->TransformPreparedPose(*a_end.node, position, rotation);
+            }
+            return position;
+        };
+
+        const auto anchorDistance = collar.position.GetDistance(leasher.position);
         if (anchorDistance > _definition.maxLength) {
             if (!_exceeded) {
                 SKSE::log::info("Exceeded by {}", anchorDistance - _definition.maxLength);
@@ -236,27 +194,21 @@ namespace LeashFramework {
         if (!a_allowForcedRecovery) {
             ReleaseRecovery();
         }
+        const auto pullGoal = holder ? holder->GetPosition() : anchor.position;
         const auto forcedRecoveryActive = a_allowForcedRecovery &&
-                                          _recoveryController.Update(_recoveryState, *leashed, collarAnchor, leasherAnchor, pullGoal, _definition.maxLength, a_deltaTime, IsRagdollEnabled());
+                                          _recoveryController.Update(_recoveryState, leashed, collar.position, leasher.position, pullGoal, _definition.maxLength, a_deltaTime, IsRagdollEnabled());
         if (forcedRecoveryActive) {
-            _pullController.Release(_pullState, leashed.get());
+            _pullController.Release(_pullState, &leashed);
         } else {
-            _pullController.Update(_pullState, *leashed, collarAnchor, leasherAnchor, ropeLength, pullGoal, pullGoalCell, holder.get() != nullptr, _definition.minLength, _definition.maxLength, a_deltaTime);
+            _pullController.Update(_pullState, leashed, collar.position, leasher.position, ropeLength, pullGoal, frame->pullGoalCell, holder != nullptr, _definition.minLength, _definition.maxLength,
+                a_deltaTime);
         }
 
-        auto poseLeasherAnchor = leasherAnchor;
-        const auto* leasherNode = holderOwnsMesh ? _bones.front().get() : anchor->poseReference;
-        if (a_holderPoseSource && leasherNode) {
-            auto rotation = leasherNode->world.rotate;
-            a_holderPoseSource->TransformPreparedPose(*leasherNode, poseLeasherAnchor, rotation);
-        }
-        const auto* collarNode = holderOwnsMesh ? anchor->poseReference : _bones.front().get();
-        if (_standalone) {
-            collarNode = _standalone->GetAttachment();
-        }
-        _pullPoseController.Prepare(_pullPoseState, *leashed, collarNode, collarAnchor, poseLeasherAnchor, ropeLength, a_deltaTime, !forcedRecoveryActive);
+        // The leasher end only follows the holder's lean, which is prepared before this leash ticks
+        const auto poseLeasherAnchor = posed(leasher);
+        _pullPoseController.Prepare(_pullPoseState, leashed, collar.node, collar.position, poseLeasherAnchor, ropeLength, a_deltaTime, !forcedRecoveryActive);
         if (holder && !forcedRecoveryActive && IsPreventOverstretchEnabled()) {
-            const auto leanLimitAttachment = _pullPoseController.GetLeanLimitAttachment(_pullPoseState, collarNode, collarAnchor, poseLeasherAnchor);
+            const auto leanLimitAttachment = _pullPoseController.GetLeanLimitAttachment(_pullPoseState, collar.node, collar.position, poseLeasherAnchor);
             Movement::UpdateHolderMovementConstraint(_holderMovementBinding, *holder, poseLeasherAnchor, leanLimitAttachment, ropeLength, _definition.overrides.preventOverstretch);
         } else {
             Movement::ClearLeashMovementConstraint(_holderMovementBinding);
@@ -264,42 +216,30 @@ namespace LeashFramework {
         auto posedNeutralPositions = _neutralPositions;
         auto posedNeutralRotations = _neutralRotations;
         // The actor wearing the leash can also be getting leaned by their own leash, so use that pose instead of pretending the mesh stayed where it was
-        const auto* meshPoseSource = holderOwnsMesh ? a_holderPoseSource : this;
-        for (std::size_t index = 0; index < _bones.size(); ++index) {
-            if (meshPoseSource) {
-                meshPoseSource->TransformPreparedPose(_standalone ? *collarNode : *_bones[index], posedNeutralPositions[index], posedNeutralRotations[index]);
+        if (meshEnd.poseSource) {
+            for (std::size_t index = 0; index < posedNeutralPositions.size(); ++index) {
+                meshEnd.poseSource->TransformPreparedPose(_mesh->GetPoseReference(index), posedNeutralPositions[index], posedNeutralRotations[index]);
             }
         }
-        auto posedEndAnchor = anchor->position;
         // Same thing for the other end. This is what keeps a leash attached to the neck when that actor's leash makes them lean
-        const auto* anchorPoseSource = holderOwnsMesh ? this : a_holderPoseSource;
-        if (anchorPoseSource && anchor->poseReference) {
-            auto posedEndRotation = anchor->poseReference->world.rotate;
-            anchorPoseSource->TransformPreparedPose(*anchor->poseReference, posedEndAnchor, posedEndRotation);
-        }
+        const auto posedEndAnchor = posed(freeEnd);
         RE::bhkWorld* world{};
-        if (auto* cell = leashed->GetParentCell()) {
+        if (auto* cell = leashed.GetParentCell()) {
             world = cell->GetbhkWorld();
         }
 
         const auto& positions = _solver.Solve(posedNeutralPositions, _segmentLengths, posedEndAnchor, a_deltaTime, world, a_actorCollision, a_settings);
         if (!forcedRecoveryActive && positions.size() >= 2) {
-            const auto& collar = holderOwnsMesh ? positions.back() : positions.front();
-            const auto& nextRopePoint = holderOwnsMesh ? positions[positions.size() - 2] : positions[1];
-            _pullPoseController.Capture(_pullPoseState, collar, nextRopePoint);
+            const auto collarIndex = holderOwnsMesh ? positions.size() - 1 : 0;
+            const auto nextIndex = holderOwnsMesh ? collarIndex - 1 : 1;
+            _pullPoseController.Capture(_pullPoseState, positions[collarIndex], positions[nextIndex]);
         }
-        if (positions.size() == _bones.size()) {
-            if (_standalone) {
-                auto position = collarAnchor;
-                auto rotation = collarNode->world.rotate;
-                TransformPreparedPose(*collarNode, position, rotation);
-                _standalone->SetFrame(position, rotation);
-                _standalone->ApplyFrame();
-            }
+        if (positions.size() == _mesh->GetBones().size()) {
+            _mesh->PoseFrame(posedNeutralPositions.front(), posedNeutralRotations.front());
             ApplyPose(posedNeutralPositions, posedNeutralRotations);
         }
-        if (newlyBound && _pullController.DiagnosticsEnabled()) {
-            Movement::LogDirectLocomotionState(*leashed, "leash tick complete");
+        if (frame->meshChanged && _pullController.DiagnosticsEnabled()) {
+            Movement::LogDirectLocomotionState(leashed, "leash tick complete");
         }
     }
 
@@ -317,221 +257,94 @@ namespace LeashFramework {
         _pullPoseController.Reset(_pullPoseState);
         _deferredTranslations.clear();
         _deferredRotations.clear();
-        if (_standalone) {
-            _standalone->Hide();
-        }
+        _mesh->Hide();
+    }
+
+    void LeashInstance::ResetBinding() {
+        ReleaseControl();
+        ResetSimulation();
+        _mesh->Reset();
+    }
+
+    void LeashInstance::Invalidate() {
+        ReleaseControl();
+        ResetSimulation();
+        _exceeded = false;
     }
 
     void LeashInstance::ApplyDeferredPose() {
         LF_PROFILE_SCOPE("Leash/ApplyDeferredPose");
-        if (_standalone && _deferredTranslations.empty()) {
-            _standalone->Hide();
+        const auto frame = Bind();
+        if (!frame) {
+            Invalidate();
             return;
         }
-        auto leashed = _leashed.get();
-        auto holder = _holder.get();
-        auto* attachmentActor = _definition.meshOwner == LeashMeshOwner::kHolder ? leashed.get() : holder.get();
-        auto* meshOwner = _definition.meshOwner == LeashMeshOwner::kHolder ? holder.get() : leashed.get();
-        if (!leashed || !meshOwner || (!_standalone && !Bind(*meshOwner))) {
+        // Never restore a pose solved for the previous binding
+        if (frame->meshChanged || frame->anchorChanged) {
             ReleaseControl();
             ResetSimulation();
-            if (_standalone) {
-                ResetBinding();
-            }
             return;
         }
 
-        const auto anchorBindResult = _anchor.Bind(attachmentActor, holder.get());
-        if (anchorBindResult == LeashAnchor::BindResult::kFailed) {
-            ReleaseControl();
-            ResetSimulation();
-            if (_standalone) {
-                ResetBinding();
-            }
+        _pullPoseController.Apply(_pullPoseState, *frame->leashed);
+        const auto& bones = _mesh->GetBones();
+        if (_deferredTranslations.empty() || _deferredTranslations.size() != bones.size() || _deferredRotations.size() != bones.size()) {
             return;
+        }
+
+        _mesh->Present();
+        for (std::size_t index = 0; index < bones.size(); ++index) {
+            bones[index]->world.translate = _deferredTranslations[index];
+            bones[index]->world.rotate = _deferredRotations[index];
+        }
+        _mesh->UpdateWorldBounds();
+    }
+
+    std::optional<LeashInstance::Frame> LeashInstance::Bind() {
+        Frame frame{.leashed = _leashed.get(), .holder = _holder.get()};
+        const auto holderOwnsMesh = _definition.HolderOwnsMesh();
+        auto* meshOwner = (holderOwnsMesh ? frame.holder : frame.leashed).get();
+        auto* attachmentActor = (holderOwnsMesh ? frame.leashed : frame.holder).get();
+        if (!frame.leashed || !meshOwner) {
+            // Nothing will rebind the mesh while its owner is gone, so release a standalone clone from its cell now
+            _mesh->Reset();
+            return std::nullopt;
+        }
+        // Bind the mesh first so a missing rope doesn't close the holder's hand around nothing
+        const auto meshResult = _mesh->Bind(*meshOwner);
+        if (meshResult == LeashAnchor::BindResult::kFailed) {
+            return std::nullopt;
+        }
+        const auto anchorResult = _anchor.Bind(attachmentActor, frame.holder.get());
+        if (anchorResult == LeashAnchor::BindResult::kFailed) {
+            return std::nullopt;
         }
         _anchor.ApplyPose();
-        const auto anchor = _anchor.GetSample(attachmentActor);
-        if (!anchor) {
-            ReleaseControl();
-            ResetSimulation();
-            if (_standalone) {
-                ResetBinding();
-            }
-            return;
+        const auto sample = _anchor.GetSample(attachmentActor);
+        if (!sample) {
+            return std::nullopt;
         }
-        auto* pullGoalCell = holder ? holder->GetParentCell() : anchor->cell;
-        if (!CanSimulateTogether(pullGoalCell, *leashed)) {
-            ReleaseControl();
-            ResetSimulation();
-            if (_standalone) {
-                ResetBinding();
-            }
-            return;
+        frame.anchor = *sample;
+        frame.pullGoalCell = frame.holder ? frame.holder->GetParentCell() : sample->cell;
+        if (!CanSimulateTogether(frame.pullGoalCell, *frame.leashed)) {
+            return std::nullopt;
         }
-        if (anchorBindResult == LeashAnchor::BindResult::kChanged) {
-            ReleaseControl();
-            ResetSimulation();
-            return;
-        }
-        if (_standalone && !Bind(*leashed)) {
-            ResetBinding();
-            return;
-        }
-
-        _pullPoseController.Apply(_pullPoseState, *leashed);
-        if (_deferredTranslations.empty() || _deferredTranslations.size() != _bones.size() || _deferredRotations.size() != _bones.size()) {
-            return;
-        }
-
-        if (_standalone) {
-            _standalone->ApplyFrame();
-        }
-        for (std::size_t index = 0; index < _bones.size(); ++index) {
-            _bones[index]->world.translate = _deferredTranslations[index];
-            _bones[index]->world.rotate = _deferredRotations[index];
-        }
-        UpdateGeometryWorldBounds();
-    }
-
-    bool LeashInstance::Bind(RE::Actor& a_meshOwner) {
-        if (_standalone) {
-            const auto result = _standalone->Bind(a_meshOwner, _definition.parentBone, _definition.leashBoneMatch);
-            if (result == LeashAnchor::BindResult::kFailed) {
-                ResetBinding();
-                return false;
-            }
-            if (result == LeashAnchor::BindResult::kChanged || _boundMeshRoot.get() != _standalone->GetRoot()) {
-                ResetBinding(false);
-                _boundMeshRoot.reset(_standalone->GetRoot());
-                _bones = _standalone->GetBones();
-                _segmentLengths = _standalone->GetSegmentLengths();
-            }
-            return true;
-        }
-        auto* meshRoot = a_meshOwner.Get3D(false);
-        if (!meshRoot) {
-            ResetBinding();
-            if (!_bindingWarningLogged) {
-                SKSE::log::warn("Unable to bind leash for {:08X}: mesh owner {:08X} has no third-person 3D", _definition.leashedFormID, a_meshOwner.GetFormID());
-                _bindingWarningLogged = true;
-            }
-            return false;
-        }
-
-        // Equipment changes can detach cached nodes without replacing the actor root.
-        const auto leashBonesAttached = _bones.size() >= 2 && std::ranges::all_of(_bones, [&](const auto& a_bone) { return IsDescendantOf(a_bone.get(), meshRoot); });
-        if (_boundMeshRoot.get() == meshRoot && leashBonesAttached) {
-            return true;
-        }
-
-        ResetBinding();
-        _boundMeshRoot.reset(meshRoot);
-
-        auto* parent = meshRoot->GetObjectByName(RE::BSFixedString(_definition.parentBone));
-        if (!parent) {
-            ResetBinding();
-            if (!_bindingWarningLogged) {
-                SKSE::log::warn("Unable to bind leash {:08X}->{:08X}: parent bone '{}' was not found", _definition.holderFormID, _definition.leashedFormID, _definition.parentBone);
-                _bindingWarningLogged = true;
-            }
-            return false;
-        }
-
-        auto* parentNode = parent->AsNode();
-        if (!parentNode) {
-            ResetBinding();
-            if (!_bindingWarningLogged) {
-                SKSE::log::warn("Unable to bind leash {:08X}->{:08X}: parent bone '{}' is not a node", _definition.holderFormID, _definition.leashedFormID, _definition.parentBone);
-                _bindingWarningLogged = true;
-            }
-            return false;
-        }
-
-        for (const auto& child : parentNode->GetChildren()) {
-            if (child) {
-                CollectLeashBones(child.get(), _definition.leashBoneMatch, _bones);
-            }
-        }
-
-        if (_bones.size() < 2) {
-            const auto matchedBones = _bones.size();
-            ResetBinding();
-            if (!_bindingWarningLogged) {
-                SKSE::log::warn("Unable to bind leash {:08X}->{:08X}: found {} child bone(s) containing '{}' under '{}'", _definition.holderFormID, _definition.leashedFormID, matchedBones, _definition.leashBoneMatch,
-                    _definition.parentBone);
-                _bindingWarningLogged = true;
-            }
-            return false;
-        }
-
-        _bindingWarningLogged = false;
-        SKSE::log::info("Bound {} leash bones containing '{}' under '{}' for {:08X}->{:08X}", _bones.size(), _definition.leashBoneMatch, _definition.parentBone, _definition.holderFormID, _definition.leashedFormID);
-        return true;
-    }
-
-    void LeashInstance::ResetBinding(bool a_releaseStandalone) {
-        ReleaseControl();
-        _bones.clear();
-        _boundMeshRoot.reset();
-        _neutralPositions.clear();
-        _neutralRotations.clear();
-        _segmentLengths.clear();
-        _deferredTranslations.clear();
-        _deferredRotations.clear();
-        _solver.Reset();
-        _pullPoseController.Reset(_pullPoseState);
-        if (_standalone && a_releaseStandalone) {
-            _standalone->Reset();
-        }
-    }
-
-    // Updates the world bounds so the leash prevents skyrim from culling
-    void LeashInstance::UpdateGeometryWorldBounds() {
-        
-        RE::BSVisit::TraverseScenegraphGeometries(_boundMeshRoot.get(), [&](RE::BSGeometry* a_geometry) {
-            const auto skin = a_geometry->GetGeometryRuntimeData().skinInstance;
-            if (!_standalone && (!skin || !skin->skinData || !skin->bones || !skin->boneWorldTransforms)) {
-                return RE::BSVisit::BSVisitControl::kContinue;
-            }
-
-            const bool usesLeashBone = _standalone || std::ranges::any_of(_bones, [&](const auto& a_bone) {
-                for (std::uint32_t index = 0; index < skin->skinData->GetBoneCount(); ++index) {
-                    if (skin->bones[index] == a_bone.get()) {
-                        return true;
-                    }
-                }
-                return false;
-            });
-
-            if (!usesLeashBone) {
-                return RE::BSVisit::BSVisitControl::kContinue;
-            }
-
-            a_geometry->UpdateWorldBound();
-
-            // Update every containing node, bottom-up, including the actor root
-            for (auto* parent = a_geometry->parent; parent; parent = parent->parent) {
-                parent->UpdateWorldBound();
-            }
-
-            return RE::BSVisit::BSVisitControl::kContinue;
-        });
+        frame.meshChanged = meshResult == LeashAnchor::BindResult::kChanged;
+        frame.anchorChanged = anchorResult == LeashAnchor::BindResult::kChanged;
+        return frame;
     }
 
     void LeashInstance::ReadNeutralPose() {
-        if (_standalone) {
-            _standalone->SetFrame(_standalone->GetAttachmentPosition(), _standalone->GetAttachment()->world.rotate);
-            _standalone->ApplyFrame();
-        }
-        _neutralPositions.resize(_bones.size());
-        _neutralRotations.resize(_bones.size());
-        _segmentLengths.resize(_bones.size() - 1);
+        _mesh->PoseNeutral();
+        const auto& bones = _mesh->GetBones();
+        _neutralPositions.resize(bones.size());
+        _neutralRotations.resize(bones.size());
+        _segmentLengths.resize(bones.size() - 1);
 
-        for (std::size_t index = 0; index < _bones.size(); ++index) {
-            _neutralPositions[index] = _bones[index]->world.translate;
-            _neutralRotations[index] = _bones[index]->world.rotate;
-            if (index > 0 && !_standalone) {
+        for (std::size_t index = 0; index < bones.size(); ++index) {
+            _neutralPositions[index] = bones[index]->world.translate;
+            _neutralRotations[index] = bones[index]->world.rotate;
+            if (index > 0) {
                 _segmentLengths[index - 1] = _neutralPositions[index - 1].GetDistance(_neutralPositions[index]);
             }
         }
@@ -543,12 +356,13 @@ namespace LeashFramework {
 
     void LeashInstance::ApplyPose(std::span<const RE::NiPoint3> a_neutralPositions, std::span<const RE::NiMatrix3> a_neutralRotations) {
         const auto& positions = _solver.GetPositions();
-        _deferredTranslations.resize(_bones.size());
-        _deferredRotations.resize(_bones.size());
-        for (std::size_t index = 0; index < _bones.size(); ++index) {
+        const auto& bones = _mesh->GetBones();
+        _deferredTranslations.resize(bones.size());
+        _deferredRotations.resize(bones.size());
+        for (std::size_t index = 0; index < bones.size(); ++index) {
             RE::NiPoint3 neutralDirection;
             RE::NiPoint3 solvedDirection;
-            if (index + 1 < _bones.size()) {
+            if (index + 1 < bones.size()) {
                 neutralDirection = a_neutralPositions[index + 1] - a_neutralPositions[index];
                 solvedDirection = positions[index + 1] - positions[index];
             } else {
@@ -556,10 +370,10 @@ namespace LeashFramework {
                 solvedDirection = positions[index] - positions[index - 1];
             }
 
-            _bones[index]->world.translate = positions[index];
-            _bones[index]->world.rotate = AlignRotation(a_neutralRotations[index], neutralDirection, solvedDirection);
-            _deferredTranslations[index] = _bones[index]->world.translate;
-            _deferredRotations[index] = _bones[index]->world.rotate;
+            bones[index]->world.translate = positions[index];
+            bones[index]->world.rotate = AlignRotation(a_neutralRotations[index], neutralDirection, solvedDirection);
+            _deferredTranslations[index] = bones[index]->world.translate;
+            _deferredRotations[index] = bones[index]->world.rotate;
         }
     }
 }  // namespace LeashFramework

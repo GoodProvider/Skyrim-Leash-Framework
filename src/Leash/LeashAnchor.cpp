@@ -6,6 +6,7 @@
 #include <type_traits>
 
 #include "../PCH.h"
+#include "SceneGraph.h"
 
 namespace LeashFramework {
     namespace {
@@ -101,13 +102,9 @@ namespace LeashFramework {
                 GripTransform{.translate = {1.742F, -3.053F, 5.712F},
                     .rotation = {RE::NiPoint3{0.867086F, -0.182325F, 0.463594F}, RE::NiPoint3{-0.227767F, 0.682550F, 0.694442F}, RE::NiPoint3{-0.443040F, -0.707733F, 0.550302F}}}}};
 
-        [[nodiscard]] bool IsDescendantOf(const RE::NiAVObject* a_object, const RE::NiAVObject* a_root) {
-            for (auto* object = a_object; object; object = object->parent) {
-                if (object == a_root) {
-                    return true;
-                }
-            }
-            return false;
+        [[nodiscard]] ClosedHand GetClosedHand(const LeashDefinition& a_definition) {
+            const auto* mesh = std::get_if<HolderMesh>(&a_definition.mesh);
+            return mesh ? mesh->closedHand : ClosedHand::kNone;
         }
 
         [[nodiscard]] ResolvedNode ResolveActorNode(RE::Actor& a_actor, std::string_view a_name) {
@@ -157,7 +154,7 @@ namespace LeashFramework {
         _boundRoot.reset();
         _anchorNode.reset();
         _worldCell = nullptr;
-        const auto attachmentFormID = _definition.meshOwner == LeashMeshOwner::kHolder ? _definition.leashedFormID : _definition.holderFormID;
+        const auto attachmentFormID = _definition.HolderOwnsMesh() ? _definition.leashedFormID : _definition.holderFormID;
         return BindHand(_attachmentHand, a_attachmentActor, attachmentFormID, a_anchor.rightHand, _bindingWarningLogged, "attachment actor");
     }
 
@@ -165,7 +162,7 @@ namespace LeashFramework {
         ResetHand(_attachmentHand);
         _worldCell = nullptr;
         const auto resolved = a_attachmentActor ? ResolveActorNode(*a_attachmentActor, a_anchor.boneName) : ResolvedNode{};
-        if (_boundRoot.get() == resolved.root && _anchorNode.get() == resolved.object && _anchorNode && IsDescendantOf(_anchorNode.get(), resolved.root)) {
+        if (_boundRoot.get() == resolved.root && _anchorNode.get() == resolved.object && _anchorNode && SceneGraph::IsDescendantOf(_anchorNode.get(), resolved.root)) {
             return BindResult::kUnchanged;
         }
 
@@ -173,7 +170,7 @@ namespace LeashFramework {
         _anchorNode.reset();
         if (!a_attachmentActor || !resolved.root || !resolved.object) {
             if (!_bindingWarningLogged) {
-                const auto attachmentFormID = _definition.meshOwner == LeashMeshOwner::kHolder ? _definition.leashedFormID : _definition.holderFormID;
+                const auto attachmentFormID = _definition.HolderOwnsMesh() ? _definition.leashedFormID : _definition.holderFormID;
                 SKSE::log::warn("Unable to bind leash attachment actor {:08X}: bone '{}' was not found", attachmentFormID, a_anchor.boneName);
                 _bindingWarningLogged = true;
             }
@@ -212,8 +209,8 @@ namespace LeashFramework {
     LeashAnchor::BindResult LeashAnchor::BindHand(HandBinding& a_binding, RE::Actor* a_actor, RE::FormID a_actorFormID, bool a_rightHand, bool& a_warningLogged, std::string_view a_role) {
         const auto& boneNames = a_rightHand ? kRightHandBones : kLeftHandBones;
         const auto resolved = a_actor ? ResolveActorNode(*a_actor, boneNames.hand) : ResolvedNode{};
-        const auto nodesAttached = a_binding.hand && IsDescendantOf(a_binding.hand.get(), resolved.root) && std::ranges::all_of(a_binding.fingers, [&](const auto& a_finger) {
-            return std::ranges::all_of(a_finger, [&](const auto& a_bone) { return !a_bone || IsDescendantOf(a_bone.get(), resolved.root); });
+        const auto nodesAttached = a_binding.hand && SceneGraph::IsDescendantOf(a_binding.hand.get(), resolved.root) && std::ranges::all_of(a_binding.fingers, [&](const auto& a_finger) {
+            return std::ranges::all_of(a_finger, [&](const auto& a_bone) { return !a_bone || SceneGraph::IsDescendantOf(a_bone.get(), resolved.root); });
         });
         if (a_binding.root.get() == resolved.root && a_binding.hand.get() == resolved.object && nodesAttached && a_binding.fingers[kMiddleFinger][0]) {
             return BindResult::kUnchanged;
@@ -249,12 +246,13 @@ namespace LeashFramework {
     }
 
     void LeashAnchor::BindHolderGrip(RE::Actor* a_holder) {
-        if (_definition.closedHand == ClosedHand::kNone) {
+        const auto closedHand = GetClosedHand(_definition);
+        if (closedHand == ClosedHand::kNone) {
             ResetHand(_holderGrip);
             _gripWarningLogged = false;
             return;
         }
-        const auto rightHand = _definition.closedHand == ClosedHand::kRight;
+        const auto rightHand = closedHand == ClosedHand::kRight;
         static_cast<void>(BindHand(_holderGrip, a_holder, _definition.holderFormID, rightHand, _gripWarningLogged, "holder grip"));
     }
 
@@ -286,8 +284,8 @@ namespace LeashFramework {
         if (const auto* handAnchor = std::get_if<HandAnchor>(&_definition.anchor)) {
             ApplyHandPose(_attachmentHand, handAnchor->rightHand);
         }
-        if (_definition.closedHand != ClosedHand::kNone) {
-            ApplyHandPose(_holderGrip, _definition.closedHand == ClosedHand::kRight);
+        if (const auto closedHand = GetClosedHand(_definition); closedHand != ClosedHand::kNone) {
+            ApplyHandPose(_holderGrip, closedHand == ClosedHand::kRight);
         }
     }
 

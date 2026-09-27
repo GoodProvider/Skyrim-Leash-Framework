@@ -1,7 +1,8 @@
 #pragma once
 
-#include <span>
 #include <memory>
+#include <optional>
+#include <span>
 #include <vector>
 
 #include "../Animation/PullPoseController.h"
@@ -13,7 +14,7 @@
 #include "LeashDefinition.h"
 #include "LeashTeleportController.h"
 #include "PullController.h"
-#include "StandaloneRope.h"
+#include "RopeMesh.h"
 
 namespace LeashFramework::Physics {
     class ActorBodyCollision;
@@ -22,13 +23,12 @@ namespace LeashFramework::Physics {
 namespace LeashFramework {
     class LeashInstance {
     public:
-        LeashInstance(LeashDefinition a_definition, PullController& a_pullController, Recovery::ForcedRecoveryController& a_recoveryController, Animation::PullPoseController& a_pullPoseController,
-            std::unique_ptr<StandaloneRope> a_standalone = {});
+        LeashInstance(LeashDefinition a_definition, PullController& a_pullController, Recovery::ForcedRecoveryController& a_recoveryController, Animation::PullPoseController& a_pullPoseController);
 
         [[nodiscard]] const LeashDefinition& GetDefinition() const;
-        [[nodiscard]] bool IsStandalone() const;
-        [[nodiscard]] RE::NiAVObject* GetStandaloneRoot() const;
-        void ResetMesh();
+        [[nodiscard]] RE::NiAVObject* GetMeshRoot() const;
+        [[nodiscard]] bool BindMesh();
+        void ResetBinding();
         void SetMinLength(float a_length) noexcept;
         void SetMaxLength(float a_length) noexcept;
         void SetRagdollOverride(std::optional<bool> a_enabled);
@@ -48,16 +48,24 @@ namespace LeashFramework {
     private:
         friend class LeashTeleportController;
 
-        [[nodiscard]] bool Bind(RE::Actor& a_meshOwner);
-        void ResetBinding(bool a_releaseStandalone = true);
+        struct Frame {
+            RE::NiPointer<RE::Actor> leashed;
+            RE::NiPointer<RE::Actor> holder;
+            LeashAnchor::Sample anchor;
+            RE::TESObjectCELL* pullGoalCell{};
+            bool meshChanged{};
+            bool anchorChanged{};
+        };
+
+        [[nodiscard]] std::optional<Frame> Bind();
+        void Invalidate();
         void ReadNeutralPose();
-        void UpdateGeometryWorldBounds();
         void TransformPreparedPose(const RE::NiAVObject& a_object, RE::NiPoint3& a_position, RE::NiMatrix3& a_rotation) const;
         void ApplyPose(std::span<const RE::NiPoint3> a_neutralPositions, std::span<const RE::NiMatrix3> a_neutralRotations);
 
         LeashDefinition _definition;
         LeashAnchor _anchor;
-        std::unique_ptr<StandaloneRope> _standalone;
+        std::unique_ptr<RopeMesh> _mesh;
         PullController& _pullController;
         Recovery::ForcedRecoveryController& _recoveryController;
         Animation::PullPoseController& _pullPoseController;
@@ -69,15 +77,12 @@ namespace LeashFramework {
         LeashTeleportController::State _teleportState;
         RE::ActorHandle _holder;
         RE::ActorHandle _leashed;
-        RE::NiPointer<RE::NiAVObject> _boundMeshRoot;
-        std::vector<RE::NiPointer<RE::NiAVObject>> _bones;
         std::vector<RE::NiPoint3> _neutralPositions;
         std::vector<RE::NiMatrix3> _neutralRotations;
         std::vector<float> _segmentLengths;
         std::vector<RE::NiPoint3> _deferredTranslations;
         std::vector<RE::NiMatrix3> _deferredRotations;
         Physics::RopeSolver _solver;
-        bool _bindingWarningLogged{};
         bool _exceeded{};
     };
 }  // namespace LeashFramework

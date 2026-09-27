@@ -34,14 +34,16 @@ namespace LeashFramework {
             }
         }
 
-        [[nodiscard]] bool AnchorFormsExist(const LeashDefinition& a_definition) {
-            if (a_definition.holderFormID != 0 && !RE::TESForm::LookupByID<RE::Actor>(a_definition.holderFormID)) {
+        [[nodiscard]] bool FormsExist(const LeashDefinition& a_definition) {
+            if (!RE::TESForm::LookupByID<RE::Actor>(a_definition.leashedFormID) || (a_definition.holderFormID != 0 && !RE::TESForm::LookupByID<RE::Actor>(a_definition.holderFormID))) {
                 return false;
             }
-            if (const auto* anchor = std::get_if<WorldPositionAnchor>(&a_definition.anchor)) {
-                return RE::TESForm::LookupByID<RE::TESObjectCELL>(anchor->cellFormID) != nullptr;
-            }
-            return true;
+            const auto* anchor = std::get_if<WorldPositionAnchor>(&a_definition.anchor);
+            return !anchor || RE::TESForm::LookupByID<RE::TESObjectCELL>(anchor->cellFormID);
+        }
+
+        [[nodiscard]] bool IsValidBoneAnchor(const ActorBoneAnchor& a_anchor) {
+            return !a_anchor.boneName.empty() && std::isfinite(a_anchor.offsetX) && std::isfinite(a_anchor.offsetY) && std::isfinite(a_anchor.offsetZ);
         }
     }  // namespace
 
@@ -106,8 +108,7 @@ namespace LeashFramework {
 
     void LeashManager::HandlePreLoadGame() {
         for (auto& leash : _leashes) {
-            leash->ReleaseControl();
-            leash->ResetMesh();
+            leash->ResetBinding();
         }
     }
 
@@ -138,10 +139,8 @@ namespace LeashFramework {
                     if (leash->ReleaseControl()) {
                         ++releasedControls;
                     }
-                    leash->ResetSimulation();
-                    if (leash->IsStandalone()) {
-                        leash->ResetMesh();
-                    }
+                    // Scene graphs are about to unload, and standalone ropes are parented into them
+                    leash->ResetBinding();
                 }
                 if (releasedControls > 0) {
                     SKSE::log::info("Released {} active control state(s) before player positioning", releasedControls);
@@ -228,9 +227,8 @@ namespace LeashFramework {
 
         LeashDefinition definition{.holderFormID = a_holder->GetFormID(),
             .leashedFormID = a_leashed->GetFormID(),
-            .meshOwner = LeashMeshOwner::kHolder,
+            .mesh = HolderMesh{.closedHand = a_closedHand == 1 ? ClosedHand::kRight : a_closedHand == 2 ? ClosedHand::kLeft : ClosedHand::kNone},
             .anchor = ActorBoneAnchor{.boneName = std::string(a_leashedBone), .offsetX = a_offsetX, .offsetY = a_offsetY, .offsetZ = a_offsetZ},
-            .closedHand = a_closedHand == 1 ? ClosedHand::kRight : a_closedHand == 2 ? ClosedHand::kLeft : ClosedHand::kNone,
             .parentBone = std::string(a_parentBone),
             .leashBoneMatch = std::string(a_leashBoneMatch),
             .minLength = a_minLength,
@@ -256,59 +254,25 @@ namespace LeashFramework {
         return ApplyDefinition(std::move(definition));
     }
 
-    bool LeashManager::ApplyStandalone(LeashDefinition a_definition, StandaloneRopeSettings a_settings) {
-        a_definition.standalone = std::move(a_settings);
-        if (!IsValid(a_definition) || !AnchorFormsExist(a_definition)) {
-            SKSE::log::warn("Standalone rope: rejected invalid leash settings");
+    bool LeashManager::ApplyDefinition(LeashDefinition a_definition) {
+        if (!IsValid(a_definition) || !FormsExist(a_definition)) {
+            SKSE::log::warn("ApplyLeash rejected invalid arguments for {:08X}->{:08X}", a_definition.holderFormID, a_definition.leashedFormID);
             return false;
         }
-        auto* leashed = RE::TESForm::LookupByID<RE::Actor>(a_definition.leashedFormID);
-        if (!leashed) {
-            return false;
-        }
-        auto* holder = RE::TESForm::LookupByID<RE::Actor>(a_definition.holderFormID);
-        LeashAnchor anchor{a_definition};
-        if (anchor.Bind(holder, holder) == LeashAnchor::BindResult::kFailed) {
-            SKSE::log::warn("Standalone rope: could not bind the holder/world endpoint for {:08X}", a_definition.leashedFormID);
-            return false;
-        }
-        auto rope = std::make_unique<StandaloneRope>(*a_definition.standalone);
-        if (rope->Bind(*leashed, a_definition.parentBone, a_definition.leashBoneMatch) == LeashAnchor::BindResult::kFailed) {
-            SKSE::log::warn("Standalone rope: creation failed for {:08X}; check the NIF, attachment bone and loaded cell", a_definition.leashedFormID);
-            return false;
-        }
-        return ApplyDefinition(std::move(a_definition), std::move(rope));
-    }
-
-    bool LeashManager::IsStandalone(RE::Actor* a_leashed) const {
-        return a_leashed && std::ranges::any_of(_leashes, [&](const auto& a_leash) {
-            return a_leash->GetDefinition().leashedFormID == a_leashed->GetFormID() && a_leash->IsStandalone();
-        });
-    }
-
-    RE::NiAVObject* LeashManager::GetStandaloneRoot(RE::Actor* a_leashed) const {
-        if (a_leashed) {
-            for (const auto& leash : _leashes) {
-                if (leash->GetDefinition().leashedFormID == a_leashed->GetFormID()) {
-                    return leash->GetStandaloneRoot();
-                }
-            }
-        }
-        return nullptr;
-    }
-
-    bool LeashManager::ApplyDefinition(LeashDefinition a_definition, std::unique_ptr<StandaloneRope> a_standalone) {
-        auto& definition = a_definition;
-        if (!IsValid(definition)) {
-            SKSE::log::warn("ApplyLeash rejected invalid arguments for {:08X}->{:08X}", definition.holderFormID, definition.leashedFormID);
+        auto leash = std::make_unique<LeashInstance>(std::move(a_definition), _pullController, _recoveryController, _pullPoseController);
+        const auto& definition = leash->GetDefinition();
+        // Unlike equipment, a standalone NIF can't be fixed after applying, so reject one that can't spawn now instead of registering an invisible leash
+        if (std::holds_alternative<StandaloneMesh>(definition.mesh) && !leash->BindMesh()) {
+            SKSE::log::warn("Standalone rope: creation failed for {:08X}; check the NIF, attachment bone and loaded cell", definition.leashedFormID);
             return false;
         }
 
-        std::vector<RE::FormID> affectedActorFormIDs{definition.leashedFormID};
+        const auto leashedFormID = definition.leashedFormID;
+        std::vector<RE::FormID> affectedActorFormIDs{leashedFormID};
         AddActorFormID(affectedActorFormIDs, definition.holderFormID);
         bool replaced{};
         std::erase_if(_leashes, [&](const auto& a_leash) {
-            if (a_leash->GetDefinition().leashedFormID != definition.leashedFormID) {
+            if (a_leash->GetDefinition().leashedFormID != leashedFormID) {
                 return false;
             }
             AddActorFormID(affectedActorFormIDs, a_leash->GetDefinition().holderFormID);
@@ -316,11 +280,10 @@ namespace LeashFramework {
             replaced = true;
             return true;
         });
-        const auto leashedFormID = definition.leashedFormID;
         if (replaced) {
             SendLeashEvent("LeashFramework_OnUnleash", "replaced", leashedFormID);
         }
-        _leashes.push_back(std::make_unique<LeashInstance>(std::move(definition), _pullController, _recoveryController, _pullPoseController, std::move(a_standalone)));
+        _leashes.push_back(std::move(leash));
         SortByPoseDependencies();
         RefreshActorFactions(affectedActorFormIDs);
         SendLeashEvent("LeashFramework_OnLeash", replaced ? "replaced" : "applied", leashedFormID);
@@ -424,6 +387,16 @@ namespace LeashFramework {
             }
         }
         return actors;
+    }
+
+    RE::NiAVObject* LeashManager::GetMeshRoot(RE::Actor* a_leashed) const {
+        if (!a_leashed) {
+            return nullptr;
+        }
+
+        const auto formID = a_leashed->GetFormID();
+        const auto leash = std::ranges::find_if(_leashes, [&](const auto& a_leash) { return a_leash->GetDefinition().leashedFormID == formID; });
+        return leash != _leashes.end() ? (*leash)->GetMeshRoot() : nullptr;
     }
 
     float LeashManager::GetMinLength(RE::Actor* a_leashed) const {
@@ -606,7 +579,7 @@ namespace LeashFramework {
 
         std::size_t loaded{};
         for (auto& definition : a_definitions) {
-            if (!IsValid(definition) || !definition.persistent || !AnchorFormsExist(definition) || !RE::TESForm::LookupByID<RE::Actor>(definition.leashedFormID)) {
+            if (!definition.persistent || !IsValid(definition) || !FormsExist(definition)) {
                 continue;
             }
             std::erase_if(_leashes, [&](const auto& a_leash) {
@@ -687,31 +660,25 @@ namespace LeashFramework {
     }
 
     bool LeashManager::IsValid(const LeashDefinition& a_definition) {
-        if (a_definition.standalone) {
-            const auto& rope = *a_definition.standalone;
-            const auto& attachment = rope.leashedAttachment;
-            if (a_definition.meshOwner != LeashMeshOwner::kLeashed || rope.modelPath.empty() || attachment.boneName.empty() ||
-                !std::isfinite(attachment.offsetX) || !std::isfinite(attachment.offsetY) || !std::isfinite(attachment.offsetZ)) {
-                return false;
-            }
+        const auto holderOwnsMesh = a_definition.HolderOwnsMesh();
+        const auto* standalone = std::get_if<StandaloneMesh>(&a_definition.mesh);
+        if (standalone && (standalone->modelPath.empty() || !IsValidBoneAnchor(standalone->leashedAttachment))) {
+            return false;
         }
-        const auto validMeshOwner = a_definition.meshOwner == LeashMeshOwner::kLeashed || a_definition.meshOwner == LeashMeshOwner::kHolder;
-        const auto validClosedHand = a_definition.closedHand == ClosedHand::kNone ||
-                                     (a_definition.meshOwner == LeashMeshOwner::kHolder && (a_definition.closedHand == ClosedHand::kRight || a_definition.closedHand == ClosedHand::kLeft));
         const auto validAnchor = std::visit(
             [&](const auto& a_anchor) {
                 using Anchor = std::decay_t<decltype(a_anchor)>;
                 if constexpr (std::is_same_v<Anchor, HandAnchor>) {
-                    return a_definition.meshOwner == LeashMeshOwner::kLeashed && a_definition.holderFormID != 0;
+                    return !holderOwnsMesh && a_definition.holderFormID != 0;
                 } else if constexpr (std::is_same_v<Anchor, ActorBoneAnchor>) {
-                    return a_definition.holderFormID != 0 && !a_anchor.boneName.empty() && std::isfinite(a_anchor.offsetX) && std::isfinite(a_anchor.offsetY) && std::isfinite(a_anchor.offsetZ);
+                    return a_definition.holderFormID != 0 && IsValidBoneAnchor(a_anchor);
                 } else {
-                    return a_definition.meshOwner == LeashMeshOwner::kLeashed && a_definition.holderFormID == 0 && a_anchor.cellFormID != 0 && std::isfinite(a_anchor.x) && std::isfinite(a_anchor.y) &&
-                           std::isfinite(a_anchor.z);
+                    return !holderOwnsMesh && a_definition.holderFormID == 0 && a_anchor.cellFormID != 0 && std::isfinite(a_anchor.x) && std::isfinite(a_anchor.y) && std::isfinite(a_anchor.z);
                 }
             },
             a_definition.anchor);
-        return validMeshOwner && validClosedHand && validAnchor && a_definition.leashedFormID != 0 && a_definition.holderFormID != a_definition.leashedFormID && (a_definition.standalone || !a_definition.parentBone.empty()) &&
+        // A standalone NIF can keep its rope bones directly below its root
+        return validAnchor && a_definition.leashedFormID != 0 && a_definition.holderFormID != a_definition.leashedFormID && (standalone || !a_definition.parentBone.empty()) &&
                !a_definition.leashBoneMatch.empty() && std::isfinite(a_definition.minLength) && std::isfinite(a_definition.maxLength) && a_definition.minLength >= 0.0F &&
                a_definition.maxLength >= a_definition.minLength && a_definition.maxLength > 0.0F;
     }

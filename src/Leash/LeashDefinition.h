@@ -6,8 +6,6 @@
 #include <variant>
 
 namespace LeashFramework {
-    enum class LeashMeshOwner : std::uint8_t { kLeashed, kHolder };
-
     enum class ClosedHand : std::uint8_t { kNone, kRight, kLeft };
 
     struct HandAnchor {
@@ -21,11 +19,6 @@ namespace LeashFramework {
         float offsetZ{};
     };
 
-    struct StandaloneRopeSettings {
-        std::string modelPath;
-        ActorBoneAnchor leashedAttachment{"NPC Neck [Neck]"};
-    };
-
     struct WorldPositionAnchor {
         std::uint32_t cellFormID{};
         float x{};
@@ -34,6 +27,19 @@ namespace LeashFramework {
     };
 
     using LeashAnchorDefinition = std::variant<HandAnchor, ActorBoneAnchor, WorldPositionAnchor>;
+
+    struct LeashedMesh {};
+
+    struct HolderMesh {
+        ClosedHand closedHand{ClosedHand::kNone};
+    };
+
+    struct StandaloneMesh {
+        std::string modelPath;
+        ActorBoneAnchor leashedAttachment{"NPC Neck [Neck]"};
+    };
+
+    using LeashMeshDefinition = std::variant<LeashedMesh, HolderMesh, StandaloneMesh>;
 
     struct LeashOverrides {
         std::optional<bool> ragdoll;
@@ -44,15 +50,15 @@ namespace LeashFramework {
     struct LeashDefinition {
         std::uint32_t holderFormID{};
         std::uint32_t leashedFormID{};
-        LeashMeshOwner meshOwner{LeashMeshOwner::kLeashed};
+        LeashMeshDefinition mesh{};
         LeashAnchorDefinition anchor{};
-        ClosedHand closedHand{ClosedHand::kNone};
         std::string parentBone{};
         std::string leashBoneMatch{};
         float minLength{};
         float maxLength{};
         bool persistent{};
         LeashOverrides overrides{};
-        std::optional<StandaloneRopeSettings> standalone;
+
+        [[nodiscard]] bool HolderOwnsMesh() const { return std::holds_alternative<HolderMesh>(mesh); }
     };
 }  // namespace LeashFramework

@@ -16,12 +16,14 @@
 #include "../PCH.h"
 #include "../../include/SKSEMenuFramework.h"
 #include "../Leash/LeashManager.h"
+#include "../Leash/SceneGraph.h"
 #include "DebugOverlay.h"
 #include "MenuLayout.h"
 
 namespace LeashFramework::UI::DebugPage {
     namespace {
         enum class DebugAnchorType : std::uint8_t { kRightHand, kLeftHand, kActorBone, kWorldPosition };
+        enum class MeshSource : std::uint8_t { kLeashed, kHolder, kStandalone };
 
         struct ActorOption {
             std::uint32_t formID{};
@@ -38,7 +40,7 @@ namespace LeashFramework::UI::DebugPage {
 
         constexpr std::string_view kSMPBoneMarker = "hdtSSEPhysics_";  // Used to help locate non-vanilla bones. Idc
         constexpr std::array kDebugAnchorLabels{"Right hand", "Left hand", "Actor bone", "World position"};
-        constexpr std::array kMeshOwnerLabels{"Leashed actor", "Leasher"};
+        constexpr std::array kMeshOwnerLabels{"Leashed actor", "Leasher", "Standalone NIF"};
         constexpr std::array kClosedHandLabels{"None", "Right", "Left"};
 
         std::vector<ActorOption> actorOptions;
@@ -74,6 +76,10 @@ namespace LeashFramework::UI::DebugPage {
                 return DescribeActor(actor);
             }
             return Locale::Format("Unavailable [{0:08X}]", a_formID);
+        }
+
+        [[nodiscard]] MeshSource GetMeshSource() {
+            return debugSettings.standaloneRope ? MeshSource::kStandalone : debugSettings.holderOwnsLeash ? MeshSource::kHolder : MeshSource::kLeashed;
         }
 
         void RefreshActors() {
@@ -157,19 +163,6 @@ namespace LeashFramework::UI::DebugPage {
                 return false;
             }
             return std::ranges::any_of(node->GetChildren(), [](const auto& a_child) { return a_child && ContainsSMPBone(*a_child); });
-        }
-
-        [[nodiscard]] std::size_t CountMatchingBones(RE::NiAVObject& a_object, std::string_view a_match) {
-            const std::string_view name = a_object.name;
-            std::size_t count = name.contains(a_match) ? 1 : 0;
-            if (auto* node = a_object.AsNode()) {
-                for (const auto& child : node->GetChildren()) {
-                    if (child) {
-                        count += CountMatchingBones(*child, a_match);
-                    }
-                }
-            }
-            return count;
         }
 
         void CollectVisibleBonePointers(RE::NiAVObject& a_object, RE::NiAVObject* a_nearestUnrenamedParent, const std::unordered_set<RE::NiAVObject*>& a_skinnedBones, bool a_requireSMPMarker,
@@ -281,7 +274,7 @@ namespace LeashFramework::UI::DebugPage {
                 return;
             }
 
-            auto* root = debugSettings.standaloneRope ? LeashManager::GetSingleton().GetStandaloneRoot(actor) : actor->Get3D(false);
+            auto* root = debugSettings.standaloneRope ? LeashManager::GetSingleton().GetMeshRoot(actor) : actor->Get3D(false);
             if (!root) {
                 skeletonStatus = debugSettings.standaloneRope ? Locale::Text("Apply a standalone test leash before inspecting its rope skeleton.") :
                     Locale::Format("{0} has no loaded third-person skeleton.", DescribeActor(actor));
@@ -560,12 +553,12 @@ namespace LeashFramework::UI::DebugPage {
                     MenuLayout::Help("World position");
                 }
                 ImGuiMCP::TableSetColumnIndex(2);
-                if (LeashManager::GetSingleton().IsStandalone(leashed)) {
+                if (std::holds_alternative<StandaloneMesh>(definition.mesh)) {
                     ImGuiMCP::AlignTextToFramePadding();
                     ImGuiMCP::TextUnformatted(Locale::Text("Standalone NIF"));
                     MenuLayout::Help("Standalone NIF");
                 } else {
-                    RenderActiveLeashActor(definition.meshOwner == LeashMeshOwner::kHolder ? definition.holderFormID : definition.leashedFormID);
+                    RenderActiveLeashActor(definition.HolderOwnsMesh() ? definition.holderFormID : definition.leashedFormID);
                 }
                 ImGuiMCP::TableSetColumnIndex(3);
                 RenderActiveLeashLength(leashed, definition.minLength, true, inputWidth);
@@ -590,15 +583,7 @@ namespace LeashFramework::UI::DebugPage {
             }
             const auto previousHolder = selectedHolder;
             const auto previousLeashed = selectedLeashed;
-            const auto previousOwner = debugSettings.holderOwnsLeash;
-            if (MenuLayout::Toggle("Standalone rope (SE)", debugSettings.standaloneRope, "Spawn a rope NIF without equipping either actor. Enable Keep leash in saves to restore it when loading.")) {
-                applyStatus.clear();
-                skeletonDump.clear();
-                skeletonStatus.clear();
-            }
-            if (debugSettings.standaloneRope) {
-                debugSettings.holderOwnsLeash = false;
-            }
+            const auto previousSource = GetMeshSource();
             MenuLayout::Columns(
                 [] { RenderActorDropdown("Leashed actor", selectedLeashed); },
                 [] {
@@ -610,14 +595,16 @@ namespace LeashFramework::UI::DebugPage {
                     }
                 },
                 [] {
-                    if (debugSettings.standaloneRope) {
-                        MenuLayout::Note("The rope is a separate scene object; neither actor needs equipment.");
-                        return;
-                    }
-                    if (MenuLayout::Choice("Physical leash owner", debugSettings.holderOwnsLeash, kMeshOwnerLabels)) {
+                    auto source = GetMeshSource();
+                    if (MenuLayout::Choice("Physical leash owner", source, kMeshOwnerLabels)) {
+                        debugSettings.holderOwnsLeash = source == MeshSource::kHolder;
+                        debugSettings.standaloneRope = source == MeshSource::kStandalone;
                         if (debugSettings.holderOwnsLeash) {
                             selectedAnchorType = DebugAnchorType::kActorBone;
                         }
+                    }
+                    if (debugSettings.standaloneRope) {
+                        MenuLayout::Note("The rope is a separate scene object; neither actor needs equipment.");
                     }
                 },
                 [] {
@@ -628,7 +615,7 @@ namespace LeashFramework::UI::DebugPage {
                         RefreshActors();
                     }
                 });
-            if (previousHolder != selectedHolder || previousLeashed != selectedLeashed || previousOwner != debugSettings.holderOwnsLeash) {
+            if (previousHolder != selectedHolder || previousLeashed != selectedLeashed || previousSource != GetMeshSource()) {
                 applyStatus.clear();
                 armorStatus.clear();
                 skeletonStatus.clear();
@@ -694,110 +681,100 @@ namespace LeashFramework::UI::DebugPage {
             });
         }
 
+        [[nodiscard]] LeashAnchorDefinition GetSelectedAnchor() {
+            if (debugSettings.holderOwnsLeash || selectedAnchorType == DebugAnchorType::kActorBone) {
+                const auto& offset = debugSettings.attachmentOffset;
+                return ActorBoneAnchor{selectedAttachmentBone, offset.x, offset.y, offset.z};
+            }
+            if (selectedAnchorType == DebugAnchorType::kWorldPosition) {
+                return WorldPositionAnchor{selectedWorldCellFormID, selectedWorldPosition.x, selectedWorldPosition.y, selectedWorldPosition.z};
+            }
+            return HandAnchor{selectedAnchorType == DebugAnchorType::kRightHand};
+        }
+
+        [[nodiscard]] LeashMeshDefinition GetSelectedMesh() {
+            if (debugSettings.standaloneRope) {
+                const auto& offset = debugSettings.leashedAttachmentOffset;
+                return StandaloneMesh{debugSettings.ropeModelPath, {debugSettings.leashedAttachmentBone, offset.x, offset.y, offset.z}};
+            }
+            if (debugSettings.holderOwnsLeash) {
+                return HolderMesh{static_cast<ClosedHand>(debugSettings.closedHand)};
+            }
+            return LeashedMesh{};
+        }
+
+        [[nodiscard]] std::string DescribeAnchor(const LeashAnchorDefinition& a_anchor, RE::Actor* a_actor) {
+            if (const auto* hand = std::get_if<HandAnchor>(&a_anchor)) {
+                return hand->rightHand ? Locale::Format("the right hand of {0}", DescribeActor(a_actor)) : Locale::Format("the left hand of {0}", DescribeActor(a_actor));
+            }
+            if (const auto* bone = std::get_if<ActorBoneAnchor>(&a_anchor)) {
+                return Locale::Format("bone '{0}' on {1}", bone->boneName, DescribeActor(a_actor));
+            }
+            const auto& world = std::get<WorldPositionAnchor>(a_anchor);
+            return Locale::Format("world position ({0:.1f}, {1:.1f}, {2:.1f}) in cell {3:08X}", world.x, world.y, world.z, world.cellFormID);
+        }
+
         void ApplyTestLeash() {
-            applyStatus.clear();
             auto* leashed = RE::TESForm::LookupByID<RE::Actor>(selectedLeashed);
             auto* holder = RE::TESForm::LookupByID<RE::Actor>(selectedHolder);
-            bool applied{};
-            std::string anchorLabel;
+            const auto anchor = GetSelectedAnchor();
+            const auto* worldAnchor = std::get_if<WorldPositionAnchor>(&anchor);
             if (!leashed) {
                 applyStatus = Locale::Text("Could not apply leash. Select an available leashed actor.");
-            } else if (debugSettings.standaloneRope) {
-                LeashDefinition definition{
-                    .holderFormID = selectedAnchorType == DebugAnchorType::kWorldPosition ? 0 : selectedHolder,
-                    .leashedFormID = selectedLeashed,
-                    .parentBone = debugSettings.parentBone,
-                    .leashBoneMatch = debugSettings.leashBoneMatch,
-                    .minLength = debugSettings.minLength,
-                    .maxLength = debugSettings.maxLength,
-                    .persistent = debugSettings.persistent};
-                switch (selectedAnchorType) {
-                    case DebugAnchorType::kWorldPosition:
-                        definition.anchor = WorldPositionAnchor{selectedWorldCellFormID, selectedWorldPosition.x, selectedWorldPosition.y, selectedWorldPosition.z};
-                        break;
-                    case DebugAnchorType::kActorBone:
-                        definition.anchor = ActorBoneAnchor{selectedAttachmentBone, debugSettings.attachmentOffset.x, debugSettings.attachmentOffset.y, debugSettings.attachmentOffset.z};
-                        break;
-                    default:
-                        definition.anchor = HandAnchor{selectedAnchorType == DebugAnchorType::kRightHand};
-                        break;
-                }
-                applied = LeashManager::GetSingleton().ApplyStandalone(std::move(definition), StandaloneRopeSettings{
-                    .modelPath = debugSettings.ropeModelPath,
-                    .leashedAttachment = {debugSettings.leashedAttachmentBone, debugSettings.leashedAttachmentOffset.x, debugSettings.leashedAttachmentOffset.y, debugSettings.leashedAttachmentOffset.z}});
-                applyStatus = Locale::Text(applied ? "Standalone leash created. No rope equipment is needed; inspect its bones in Skeleton." :
-                    "Could not create standalone rope. Requires SE, loaded actors/cell, valid bone names and a self-contained NIF. Check the plugin log.");
-            } else if (debugSettings.holderOwnsLeash) {
-                if (!holder) {
-                    applyStatus = Locale::Text("Could not apply leash. Select an available leasher.");
-                } else {
-                    applied = LeashManager::GetSingleton().ApplyHolderOwnedLeashToBone(holder, leashed, selectedAttachmentBone, debugSettings.attachmentOffset.x, debugSettings.attachmentOffset.y,
-                        debugSettings.attachmentOffset.z, debugSettings.parentBone, debugSettings.leashBoneMatch, debugSettings.minLength, debugSettings.maxLength, debugSettings.persistent, debugSettings.closedHand);
-                    anchorLabel = Locale::Format("bone '{0}' on {1}", selectedAttachmentBone, DescribeActor(leashed));
-                }
-            } else if (selectedAnchorType == DebugAnchorType::kWorldPosition) {
-                auto* cell = RE::TESForm::LookupByID<RE::TESObjectCELL>(selectedWorldCellFormID);
-                if (!cell) {
-                    applyStatus = Locale::Text("Could not apply leash. Capture an available player position and cell.");
-                } else {
-                    applied = LeashManager::GetSingleton().ApplyAtPosition(leashed, cell, selectedWorldPosition.x, selectedWorldPosition.y, selectedWorldPosition.z, debugSettings.parentBone,
-                        debugSettings.leashBoneMatch, debugSettings.minLength, debugSettings.maxLength, debugSettings.persistent);
-                    anchorLabel = Locale::Format("world position ({0:.1f}, {1:.1f}, {2:.1f}) in cell {3:08X}", selectedWorldPosition.x, selectedWorldPosition.y, selectedWorldPosition.z, selectedWorldCellFormID);
-                }
-            } else {
-                if (!holder) {
-                    applyStatus = Locale::Text("Could not apply leash. Select an available leasher.");
-                } else if (selectedAnchorType == DebugAnchorType::kActorBone) {
-                    applied = LeashManager::GetSingleton().ApplyToBone(holder, leashed, selectedAttachmentBone, debugSettings.attachmentOffset.x, debugSettings.attachmentOffset.y, debugSettings.attachmentOffset.z,
-                        debugSettings.parentBone, debugSettings.leashBoneMatch, debugSettings.minLength, debugSettings.maxLength, debugSettings.persistent);
-                    anchorLabel = Locale::Format("bone '{0}' on {1}", selectedAttachmentBone, DescribeActor(holder));
-                } else {
-                    const bool rightHand = selectedAnchorType == DebugAnchorType::kRightHand;
-                    applied = LeashManager::GetSingleton().ApplyToHand(holder, leashed, debugSettings.parentBone, debugSettings.leashBoneMatch, debugSettings.minLength, debugSettings.maxLength,
-                        debugSettings.persistent, rightHand);
-                    anchorLabel = rightHand ? Locale::Format("the right hand of {0}", DescribeActor(holder)) : Locale::Format("the left hand of {0}", DescribeActor(holder));
-                }
+                return;
+            }
+            if (worldAnchor && !RE::TESForm::LookupByID<RE::TESObjectCELL>(worldAnchor->cellFormID)) {
+                applyStatus = Locale::Text("Could not apply leash. Capture an available player position and cell.");
+                return;
+            }
+            if (!worldAnchor && !holder) {
+                applyStatus = Locale::Text("Could not apply leash. Select an available leasher.");
+                return;
             }
 
-            if (applyStatus.empty()) {
-                if (!applied) {
-                    applyStatus = Locale::Text("Could not apply leash. Check the selected anchor, bone names, and length values.");
-                } else {
-                    auto* meshOwner = debugSettings.holderOwnsLeash ? holder : leashed;
-                    auto* root = meshOwner ? meshOwner->Get3D(false) : nullptr;
-                    auto* parent = root ? root->GetObjectByName(RE::BSFixedString(debugSettings.parentBone)) : nullptr;
-                    auto* parentNode = parent ? parent->AsNode() : nullptr;
-                    if (!root) {
-                        applyStatus = Locale::Format("Warning: Leash applied, but {0} has no currently loaded third-person skeleton.", DescribeActor(meshOwner));
-                    } else if (!parent) {
-                        applyStatus = Locale::Format("Warning: Leash applied, but {0} does not currently contain parent bone '{1}'.", DescribeActor(meshOwner), debugSettings.parentBone);
-                    } else if (!parentNode) {
-                        applyStatus = Locale::Format("Warning: Leash applied, but parent bone '{0}' on {1} is not a node.", debugSettings.parentBone, DescribeActor(meshOwner));
-                    } else {
-                        std::size_t matchedBones{};
-                        const std::string_view leashMatch{debugSettings.leashBoneMatch};
-                        for (const auto& child : parentNode->GetChildren()) {
-                            if (child) {
-                                matchedBones += CountMatchingBones(*child, leashMatch);
-                            }
-                        }
-                        if (matchedBones == 0) {
-                            applyStatus = Locale::Format("Warning: Leash applied, but {0} does not currently contain a bone matching '{1}' under '{2}'.", DescribeActor(meshOwner), leashMatch, debugSettings.parentBone);
-                        } else if (matchedBones == 1) {
-                            applyStatus = Locale::Format("Warning: Leash applied, but {0} currently contains only one bone matching '{1}' under '{2}'; at least two are required to bind.", DescribeActor(meshOwner),
-                                leashMatch, debugSettings.parentBone);
-                        } else if (debugSettings.holderOwnsLeash) {
-                            auto* attachmentRoot = leashed->Get3D(false);
-                            if (!attachmentRoot || !attachmentRoot->GetObjectByName(RE::BSFixedString(selectedAttachmentBone))) {
-                                applyStatus = Locale::Format("Warning: Leash applied, but {0} does not currently contain attachment bone '{1}'.", DescribeActor(leashed), selectedAttachmentBone);
-                            } else {
-                                applyStatus = Locale::Format("Leashed {0} to {1} using the leash equipped by {2}.", DescribeActor(leashed), anchorLabel, DescribeActor(holder));
-                            }
-                        } else {
-                            applyStatus = Locale::Format("Leashed {0} to {1}.", DescribeActor(leashed), anchorLabel);
-                        }
-                    }
-                }
+            const auto anchorLabel = DescribeAnchor(anchor, debugSettings.holderOwnsLeash ? leashed : holder);
+            const auto applied = LeashManager::GetSingleton().ApplyDefinition({.holderFormID = worldAnchor ? 0 : selectedHolder,
+                .leashedFormID = selectedLeashed,
+                .mesh = GetSelectedMesh(),
+                .anchor = anchor,
+                .parentBone = debugSettings.parentBone,
+                .leashBoneMatch = debugSettings.leashBoneMatch,
+                .minLength = debugSettings.minLength,
+                .maxLength = debugSettings.maxLength,
+                .persistent = debugSettings.persistent});
+            if (debugSettings.standaloneRope) {
+                applyStatus = Locale::Text(applied ? "Standalone leash created. No rope equipment is needed; inspect its bones in Skeleton." :
+                    "Could not create standalone rope. Requires loaded actors/cell, valid bone names and a self-contained NIF. Check the plugin log.");
+                return;
+            }
+            if (!applied) {
+                applyStatus = Locale::Text("Could not apply leash. Check the selected anchor, bone names, and length values.");
+                return;
+            }
+
+            auto* meshOwner = debugSettings.holderOwnsLeash ? holder : leashed;
+            auto* root = meshOwner->Get3D(false);
+            auto* parent = root ? root->GetObjectByName(RE::BSFixedString(debugSettings.parentBone)) : nullptr;
+            auto* parentNode = parent ? parent->AsNode() : nullptr;
+            const std::string_view leashMatch{debugSettings.leashBoneMatch};
+            const auto matchedBones = parentNode ? SceneGraph::CollectBones(*parentNode, leashMatch).size() : 0;
+            if (!root) {
+                applyStatus = Locale::Format("Warning: Leash applied, but {0} has no currently loaded third-person skeleton.", DescribeActor(meshOwner));
+            } else if (!parent) {
+                applyStatus = Locale::Format("Warning: Leash applied, but {0} does not currently contain parent bone '{1}'.", DescribeActor(meshOwner), debugSettings.parentBone);
+            } else if (!parentNode) {
+                applyStatus = Locale::Format("Warning: Leash applied, but parent bone '{0}' on {1} is not a node.", debugSettings.parentBone, DescribeActor(meshOwner));
+            } else if (matchedBones == 0) {
+                applyStatus = Locale::Format("Warning: Leash applied, but {0} does not currently contain a bone matching '{1}' under '{2}'.", DescribeActor(meshOwner), leashMatch, debugSettings.parentBone);
+            } else if (matchedBones == 1) {
+                applyStatus = Locale::Format("Warning: Leash applied, but {0} currently contains only one bone matching '{1}' under '{2}'; at least two are required to bind.", DescribeActor(meshOwner),
+                    leashMatch, debugSettings.parentBone);
+            } else if (!debugSettings.holderOwnsLeash) {
+                applyStatus = Locale::Format("Leashed {0} to {1}.", DescribeActor(leashed), anchorLabel);
+            } else if (auto* attachmentRoot = leashed->Get3D(false); !attachmentRoot || !attachmentRoot->GetObjectByName(RE::BSFixedString(selectedAttachmentBone))) {
+                applyStatus = Locale::Format("Warning: Leash applied, but {0} does not currently contain attachment bone '{1}'.", DescribeActor(leashed), selectedAttachmentBone);
+            } else {
+                applyStatus = Locale::Format("Leashed {0} to {1} using the leash equipped by {2}.", DescribeActor(leashed), anchorLabel, DescribeActor(holder));
             }
         }
 
