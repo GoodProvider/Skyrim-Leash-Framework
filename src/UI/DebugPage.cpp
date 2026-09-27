@@ -61,6 +61,7 @@ namespace LeashFramework::UI::DebugPage {
         std::vector<SkeletonNode> skeletonDump;
         std::string skeletonDumpActor;
         char skeletonFilter[128]{};
+        bool skeletonSkinnedOnly{true};
 
         [[nodiscard]] std::string DescribeActor(RE::Actor* a_actor) {
             if (!a_actor) {
@@ -192,6 +193,19 @@ namespace LeashFramework::UI::DebugPage {
             }
         }
 
+        void CollectAllNodePointers(RE::NiAVObject& a_object, std::unordered_set<RE::NiAVObject*>& a_visibleBones) {
+            auto* node = a_object.AsNode();
+            if (!node) {
+                return;
+            }
+            a_visibleBones.insert(&a_object);
+            for (const auto& child : node->GetChildren()) {
+                if (child) {
+                    CollectAllNodePointers(*child, a_visibleBones);
+                }
+            }
+        }
+
         [[nodiscard]] std::vector<SkeletonNode> CaptureVisibleSkeleton(RE::NiAVObject& a_object, const std::unordered_set<RE::NiAVObject*>& a_visibleBones, const std::unordered_set<RE::NiAVObject*>& a_likelyCandidates,
             std::size_t& a_nodeCount) {
             std::vector<SkeletonNode> children;
@@ -212,8 +226,8 @@ namespace LeashFramework::UI::DebugPage {
             }
 
             const char* objectName = a_object.name.c_str();
-            SkeletonNode result{.name = objectName && objectName[0] != '\0' ? objectName : "<No Name>", .children = std::move(children), .likelyCandidate = a_likelyCandidates.contains(&a_object)};
-            result.displayName = objectName && objectName[0] != '\0' ? result.name : Locale::Text("<No Name>");
+            SkeletonNode result{.name = objectName ? objectName : "", .children = std::move(children), .likelyCandidate = a_likelyCandidates.contains(&a_object)};
+            result.displayName = result.name.empty() ? Locale::Text("<No Name>") : result.name;
             if (result.name.contains(kSMPBoneMarker)) {
                 if (const auto separator = result.name.find(' '); separator != std::string::npos && separator + 1 < result.name.size()) {
                     result.displayName.erase(0, separator + 1);
@@ -237,7 +251,7 @@ namespace LeashFramework::UI::DebugPage {
             }
 
             const std::string_view leashMatch{debugSettings.leashBoneMatch};
-            const bool isParent = a_node.name == debugSettings.parentBone;
+            const bool isParent = !a_node.name.empty() && a_node.name == debugSettings.parentBone;
             const bool isLeashMatch = !leashMatch.empty() && a_node.name.contains(leashMatch);
             const auto label = std::format("{} [NiNode]", a_node.displayName);
 
@@ -255,6 +269,10 @@ namespace LeashFramework::UI::DebugPage {
 
             ImGuiMCP::PushID(&a_node);
             const bool isOpen = ImGuiMCP::TreeNodeEx("##SkeletonNode", treeFlags, "%s", label.c_str());
+            if (!a_node.name.empty() && ImGuiMCP::IsItemClicked(ImGuiMCP::ImGuiMouseButton_Right)) {
+                ImGuiMCP::SetClipboardText(a_node.name.c_str());
+                skeletonStatus = Locale::Format("Copied '{0}' to the clipboard.", a_node.name);
+            }
             if (!a_node.children.empty() && isOpen) {
                 for (const auto& child : a_node.children) {
                     RenderSkeletonNode(child, a_filter);
@@ -262,6 +280,26 @@ namespace LeashFramework::UI::DebugPage {
                 ImGuiMCP::TreePop();
             }
             ImGuiMCP::PopID();
+        }
+
+        void CollectSkinnedBonePointers(RE::NiAVObject& a_root, RE::NiNode& a_npcNode, std::unordered_set<RE::NiAVObject*>& a_visibleBones,
+            std::unordered_set<RE::NiAVObject*>& a_likelyCandidates) {
+            std::unordered_set<RE::NiAVObject*> skinnedBones;
+            RE::BSVisit::TraverseScenegraphGeometries(&a_root, [&](RE::BSGeometry* a_geometry) {
+                const auto skin = a_geometry->GetGeometryRuntimeData().skinInstance;
+                if (!skin || !skin->bones) {
+                    return RE::BSVisit::BSVisitControl::kContinue;
+                }
+                for (std::uint32_t index = 0, count = skin->skinData ? skin->skinData->GetBoneCount() : skin->numMatrices; index < count; ++index) {
+                    if (auto* bone = skin->bones[index]; bone && bone->AsNode()) {
+                        skinnedBones.insert(bone);
+                    }
+                }
+                return RE::BSVisit::BSVisitControl::kContinue;
+            });
+
+            const bool requireSMPMarker = !debugSettings.standaloneRope && ContainsSMPBone(a_npcNode);
+            CollectVisibleBonePointers(a_npcNode, &a_npcNode, skinnedBones, requireSMPMarker, a_visibleBones, a_likelyCandidates);
         }
 
         void DumpSelectedSkeleton() {
@@ -288,24 +326,13 @@ namespace LeashFramework::UI::DebugPage {
                 return;
             }
 
-            std::unordered_set<RE::NiAVObject*> skinnedBones;
-            RE::BSVisit::TraverseScenegraphGeometries(root, [&](RE::BSGeometry* a_geometry) {
-                const auto skin = a_geometry->GetGeometryRuntimeData().skinInstance;
-                if (!skin || !skin->bones) {
-                    return RE::BSVisit::BSVisitControl::kContinue;
-                }
-                for (std::uint32_t index = 0, count = skin->skinData ? skin->skinData->GetBoneCount() : skin->numMatrices; index < count; ++index) {
-                    if (auto* bone = skin->bones[index]; bone && bone->AsNode()) {
-                        skinnedBones.insert(bone);
-                    }
-                }
-                return RE::BSVisit::BSVisitControl::kContinue;
-            });
-
-            const bool requireSMPMarker = !debugSettings.standaloneRope && ContainsSMPBone(*npcNode);
             std::unordered_set<RE::NiAVObject*> visibleBones{npcNode};
             std::unordered_set<RE::NiAVObject*> likelyCandidates;
-            CollectVisibleBonePointers(*npcNode, npcNode, skinnedBones, requireSMPMarker, visibleBones, likelyCandidates);
+            if (skeletonSkinnedOnly) {
+                CollectSkinnedBonePointers(*root, *npcNode, visibleBones, likelyCandidates);
+            } else {
+                CollectAllNodePointers(*npcNode, visibleBones);
+            }
 
             skeletonDumpActor = debugSettings.standaloneRope ? Locale::Format("Standalone rope for {0}", DescribeActor(actor)) : DescribeActor(actor);
             std::size_t nodeCount{};
@@ -315,6 +342,11 @@ namespace LeashFramework::UI::DebugPage {
 
         void RenderSkeletonDumper() {
             MenuLayout::Panel("Skeleton inspector", "Inspect skinned bones on the physical leash owner. The configured parent and matching rope bones are highlighted.", [] {
+                if (MenuLayout::Toggle("Skinned bones only", skeletonSkinnedOnly,
+                        "Show only bones used by skinned geometry. When the skeleton has SMP physics bones, only those are shown. Turn off to show every node.") &&
+                    !skeletonDump.empty()) {
+                    DumpSelectedSkeleton();
+                }
                 MenuLayout::Feedback(skeletonStatus);
                 if (skeletonDump.empty()) {
                     MenuLayout::Note("Capture a skeleton to browse its bones.");
@@ -322,6 +354,7 @@ namespace LeashFramework::UI::DebugPage {
                 }
                 ImGuiMCP::TextWrapped("%s", Locale::Format("Snapshot: {0}", skeletonDumpActor).c_str());
                 MenuLayout::Text("Find a bone", skeletonFilter, "Show matching bones and their ancestors. Clear the filter to see the complete snapshot.", "Filter bone names");
+                MenuLayout::Note("Right-click a bone to copy its full name.");
                 const std::string_view filter{skeletonFilter};
                 if (!std::ranges::any_of(skeletonDump, [&](const SkeletonNode& a_node) { return SkeletonNodeMatchesFilter(a_node, filter); })) {
                     MenuLayout::Note("No bones match this filter.");
