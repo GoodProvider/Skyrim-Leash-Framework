@@ -32,6 +32,59 @@ namespace LeashFramework::Papyrus {
             return LeashManager::GetSingleton().ApplyAtPosition(a_leashed, a_anchorCell, a_x, a_y, a_z, a_parentBone, a_leashBoneMatch, a_minLength, a_maxLength, a_persistent);
         }
 
+        bool ApplyStandalone(std::string_view a_function, RE::Actor* a_holder, RE::Actor* a_leashed, LeashAnchorDefinition a_anchor, const RE::BSFixedString& a_modelPath,
+            const RE::BSFixedString& a_leashedBone, float a_offsetX, float a_offsetY, float a_offsetZ, const RE::BSFixedString& a_parentBone, const RE::BSFixedString& a_leashBoneMatch, float a_minLength,
+            float a_maxLength, bool a_persistent) {
+            if (!a_leashed) {
+                SKSE::log::warn("{} rejected null leashed actor", a_function);
+                return false;
+            }
+            const auto toString = [](const RE::BSFixedString& a_text) { return std::string{std::string_view{a_text}}; };
+            return LeashManager::GetSingleton().ApplyDefinition({.holderFormID = a_holder ? a_holder->GetFormID() : 0,
+                .leashedFormID = a_leashed->GetFormID(),
+                .mesh = StandaloneMesh{.modelPath = toString(a_modelPath),
+                    .leashedAttachment = {.boneName = toString(a_leashedBone), .offsetX = a_offsetX, .offsetY = a_offsetY, .offsetZ = a_offsetZ}},
+                .anchor = std::move(a_anchor),
+                .parentBone = toString(a_parentBone),
+                .leashBoneMatch = toString(a_leashBoneMatch),
+                .minLength = a_minLength,
+                .maxLength = a_maxLength,
+                .persistent = a_persistent});
+        }
+
+        bool ApplyStandaloneLeash(RE::StaticFunctionTag*, RE::Actor* a_holder, RE::Actor* a_leashed, RE::BSFixedString a_modelPath, RE::BSFixedString a_leashedBone, RE::BSFixedString a_parentBone,
+            RE::BSFixedString a_leashBoneMatch, float a_minLength, float a_maxLength, bool a_persistent, bool a_rightHand, float a_offsetX, float a_offsetY, float a_offsetZ) {
+            if (!a_holder) {
+                SKSE::log::warn("ApplyStandaloneLeash rejected null holder");
+                return false;
+            }
+            return ApplyStandalone("ApplyStandaloneLeash", a_holder, a_leashed, HandAnchor{.rightHand = a_rightHand}, a_modelPath, a_leashedBone, a_offsetX, a_offsetY, a_offsetZ, a_parentBone,
+                a_leashBoneMatch, a_minLength, a_maxLength, a_persistent);
+        }
+
+        bool ApplyStandaloneLeashToBone(RE::StaticFunctionTag*, RE::Actor* a_holder, RE::Actor* a_leashed, RE::BSFixedString a_modelPath, RE::BSFixedString a_leashedBone, RE::BSFixedString a_holderBone,
+            RE::BSFixedString a_parentBone, RE::BSFixedString a_leashBoneMatch, float a_minLength, float a_maxLength, bool a_persistent, float a_leashedOffsetX, float a_leashedOffsetY, float a_leashedOffsetZ,
+            float a_holderOffsetX, float a_holderOffsetY, float a_holderOffsetZ) {
+            if (!a_holder) {
+                SKSE::log::warn("ApplyStandaloneLeashToBone rejected null holder");
+                return false;
+            }
+            const ActorBoneAnchor anchor{.boneName = std::string{std::string_view{a_holderBone}}, .offsetX = a_holderOffsetX, .offsetY = a_holderOffsetY, .offsetZ = a_holderOffsetZ};
+            return ApplyStandalone("ApplyStandaloneLeashToBone", a_holder, a_leashed, anchor, a_modelPath, a_leashedBone, a_leashedOffsetX, a_leashedOffsetY, a_leashedOffsetZ, a_parentBone,
+                a_leashBoneMatch, a_minLength, a_maxLength, a_persistent);
+        }
+
+        bool ApplyStandaloneLeashAtPosition(RE::StaticFunctionTag*, RE::Actor* a_leashed, RE::TESObjectCELL* a_anchorCell, float a_x, float a_y, float a_z, RE::BSFixedString a_modelPath,
+            RE::BSFixedString a_leashedBone, RE::BSFixedString a_parentBone, RE::BSFixedString a_leashBoneMatch, float a_minLength, float a_maxLength, bool a_persistent, float a_offsetX, float a_offsetY,
+            float a_offsetZ) {
+            if (!a_anchorCell) {
+                SKSE::log::warn("ApplyStandaloneLeashAtPosition rejected null cell");
+                return false;
+            }
+            return ApplyStandalone("ApplyStandaloneLeashAtPosition", nullptr, a_leashed, WorldPositionAnchor{.cellFormID = a_anchorCell->GetFormID(), .x = a_x, .y = a_y, .z = a_z}, a_modelPath,
+                a_leashedBone, a_offsetX, a_offsetY, a_offsetZ, a_parentBone, a_leashBoneMatch, a_minLength, a_maxLength, a_persistent);
+        }
+
         bool DisconnectLeash(RE::StaticFunctionTag*, RE::Actor* a_holder, RE::Actor* a_leashed) { return LeashManager::GetSingleton().Disconnect(a_holder, a_leashed); }
 
         bool UnleashAll(RE::StaticFunctionTag*, RE::Actor* a_actor) { return LeashManager::GetSingleton().UnleashAll(a_actor); }
@@ -69,6 +122,9 @@ namespace LeashFramework::Papyrus {
         a_vm->RegisterFunction("ApplyLeashToBone", kScriptName, ApplyLeashToBone);
         a_vm->RegisterFunction("ApplyHolderOwnedLeashToBone", kScriptName, ApplyHolderOwnedLeashToBone);
         a_vm->RegisterFunction("ApplyLeashAtPosition", kScriptName, ApplyLeashAtPosition);
+        a_vm->RegisterFunction("ApplyStandaloneLeash", kScriptName, ApplyStandaloneLeash);
+        a_vm->RegisterFunction("ApplyStandaloneLeashToBone", kScriptName, ApplyStandaloneLeashToBone);
+        a_vm->RegisterFunction("ApplyStandaloneLeashAtPosition", kScriptName, ApplyStandaloneLeashAtPosition);
         a_vm->RegisterFunction("DisconnectLeash", kScriptName, DisconnectLeash);
         a_vm->RegisterFunction("UnleashAll", kScriptName, UnleashAll);
         a_vm->RegisterFunction("IsLeashed", kScriptName, IsLeashed);

@@ -100,6 +100,50 @@ Returns true when the arguments are valid and the leash is accepted.
 Bool Function ApplyLeashAtPosition(Actor leashed, Cell anchorCell, Float x, Float y, Float z, String parentBone, String leashBoneMatch, Float minLength, Float maxLength, Bool persistent) Global Native
 
 ;/
+Standalone rope leashes
+
+Instead of using a rope equipped as armor, these functions clone a rope NIF into the leashed actor's cell.
+The first ordered rope bone attaches to leashedAttachmentBone on the leashed actor and the last attaches to
+the anchor. Neither actor needs rope equipment.
+
+modelPath: NIF path relative to Data/Meshes, for example "Leash/neck_chain.nif". The NIF must contain its own
+rope bones and a skinned rope bound to them, and must not contain collision objects.
+leashedAttachmentBone: Exact node name on the leashed actor, for example "NPC Neck [Neck]".
+parentBone: Optional exact node name inside the NIF. Pass "" to search from the NIF root.
+leashBoneMatch: Text found anywhere in each ordered rope bone name beneath parentBone. At least two are required.
+leashedOffsetX, leashedOffsetY, leashedOffsetZ: Optional local-space offset from leashedAttachmentBone. The
+offset follows the bone's translation, rotation, and scale, but does not add an attachment rotation.
+All other arguments and replacement behavior match the equivalent equipped-rope functions.
+
+The leashed actor must be loaded when the function is called. Returns false, without replacing an existing
+leash, when the arguments are invalid or the rope cannot be created, for example because the NIF fails to load
+or has no valid rope bones. Check the SKSE log for the reason.
+/;
+
+;/
+Connects a standalone rope from the leashed actor to either of the holder's hands and applies the closed-fist grip.
+
+rightHand: When true, uses NPC R Hand [RHnd]. When false, uses NPC L Hand [LHnd].
+/;
+Bool Function ApplyStandaloneLeash(Actor holder, Actor leashed, String modelPath, String leashedAttachmentBone, String parentBone, String leashBoneMatch, Float minLength, Float maxLength, Bool persistent, Bool rightHand = True, Float leashedOffsetX = 0.0, Float leashedOffsetY = 0.0, Float leashedOffsetZ = 0.0) Global Native
+
+;/
+Connects a standalone rope from the leashed actor to an exact bone on the holder.
+
+holderBone: Exact node name on the holder. This attachment does not alter the holder's hand pose.
+holderOffsetX, holderOffsetY, holderOffsetZ: Optional local-space offset from holderBone, with the same
+behavior as the leashed offsets.
+/;
+Bool Function ApplyStandaloneLeashToBone(Actor holder, Actor leashed, String modelPath, String leashedAttachmentBone, String holderBone, String parentBone, String leashBoneMatch, Float minLength, Float maxLength, Bool persistent, Float leashedOffsetX = 0.0, Float leashedOffsetY = 0.0, Float leashedOffsetZ = 0.0, Float holderOffsetX = 0.0, Float holderOffsetY = 0.0, Float holderOffsetZ = 0.0) Global Native
+
+;/
+Connects a holderless standalone rope from the leashed actor to a fixed world position.
+
+anchorCell, x, y, z: Match ApplyLeashAtPosition, including pulling, faction, and disconnect behavior.
+/;
+Bool Function ApplyStandaloneLeashAtPosition(Actor leashed, Cell anchorCell, Float x, Float y, Float z, String modelPath, String leashedAttachmentBone, String parentBone, String leashBoneMatch, Float minLength, Float maxLength, Bool persistent, Float leashedOffsetX = 0.0, Float leashedOffsetY = 0.0, Float leashedOffsetZ = 0.0) Global Native
+
+;/
 Disconnects the leash matching the specific holder and leashed actor.
 
 holder: Actor holding the leash. Pass None for a holderless world-position leash.
