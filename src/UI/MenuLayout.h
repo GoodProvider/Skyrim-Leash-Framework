@@ -130,7 +130,9 @@ namespace LeashFramework::UI::MenuLayout {
     template <class Content, class Action = std::nullptr_t>
     void Panel(const char* a_title, const char* a_description, Content a_content, Action a_action = nullptr, const char* a_actionLabel = "Reset",
         const char* a_actionHelp = "Restores the defaults for this section.") {
-        if (ImGuiMCP::BeginChild(a_title, {0.0F, 0.0F}, ImGuiMCP::ImGuiChildFlags_Border | ImGuiMCP::ImGuiChildFlags_AutoResizeY)) {
+        // Auto-sized panels can report a sub-pixel scroll range from float rounding, which makes ImGui route the mouse wheel to them instead of the page
+        if (ImGuiMCP::BeginChild(a_title, {0.0F, 0.0F}, ImGuiMCP::ImGuiChildFlags_Border | ImGuiMCP::ImGuiChildFlags_AutoResizeY,
+                ImGuiMCP::ImGuiWindowFlags_NoScrollbar | ImGuiMCP::ImGuiWindowFlags_NoScrollWithMouse)) {
             if constexpr (std::is_same_v<Action, std::nullptr_t>) {
                 Title(a_title, a_description);
             } else if (Heading(a_title, a_actionLabel, a_actionHelp, a_description)) {
@@ -186,6 +188,28 @@ namespace LeashFramework::UI::MenuLayout {
 
     inline void Vector(const char* a_label, RE::NiPoint3& a_value, const char* a_help = nullptr) {
         Field(a_label, [&](const char* a_id) { return ImGuiMCP::InputFloat3(a_id, &a_value.x, "%.2f"); }, a_help);
+    }
+
+    inline bool StepVector(const char* a_label, RE::NiPoint3& a_value, const char* a_help = nullptr, float a_step = 0.1F) {
+        return Field(a_label, [&](const char*) {
+            const auto& style = *ImGuiMCP::GetStyle();
+            ImGuiMCP::ImVec2 available;
+            ImGuiMCP::GetContentRegionAvail(&available);
+            const auto inputWidth = std::max((available.x - style.ItemInnerSpacing.x * 2.0F) / 7.5F, ImGuiMCP::GetFontSize() * 3.0F);
+            const auto axisWidth = inputWidth + (ImGuiMCP::GetFrameHeight() + style.ItemInnerSpacing.x) * 2.0F;
+            const bool oneLine = axisWidth * 3.0F + style.ItemSpacing.x * 2.0F <= available.x;
+            bool changed{};
+            for (int axis = 0; auto* value : {&a_value.x, &a_value.y, &a_value.z}) {
+                if (axis > 0 && oneLine) {
+                    ImGuiMCP::SameLine();
+                }
+                ImGuiMCP::PushID(axis++);
+                ImGuiMCP::SetNextItemWidth(axisWidth);
+                changed |= ImGuiMCP::InputFloat("##Axis", value, a_step, a_step * 10.0F, "%.2f");
+                ImGuiMCP::PopID();
+            }
+            return changed;
+        }, a_help);
     }
 
     template <std::size_t N>

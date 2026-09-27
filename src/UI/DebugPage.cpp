@@ -644,7 +644,7 @@ namespace LeashFramework::UI::DebugPage {
                 }
             } else if (debugSettings.holderOwnsLeash || selectedAnchorType == DebugAnchorType::kActorBone) {
                 MenuLayout::Text(debugSettings.holderOwnsLeash ? "Bone on leashed actor" : "Bone on leasher", selectedAttachmentBone, "Exact name of the bone at the rope's free end.");
-                MenuLayout::Vector("Attachment offset (X, Y, Z)", debugSettings.attachmentOffset,
+                MenuLayout::StepVector("Attachment offset (X, Y, Z)", debugSettings.attachmentOffset,
                     "Offset from the selected attachment bone, in its local coordinates.");
                 if (debugSettings.holderOwnsLeash) {
                     MenuLayout::Choice("Closed leasher hand", debugSettings.closedHand, kClosedHandLabels);
@@ -658,7 +658,7 @@ namespace LeashFramework::UI::DebugPage {
             if (debugSettings.standaloneRope) {
                 MenuLayout::Text("Rope NIF path", debugSettings.ropeModelPath, "Path relative to Data/Meshes. Include the rope skeleton and skinned geometry; omit NIF collision objects.");
                 MenuLayout::Text("Bone on leashed actor", debugSettings.leashedAttachmentBone, "Exact third-person bone name for the first rope endpoint.");
-                MenuLayout::Vector("Leashed attachment offset", debugSettings.leashedAttachmentOffset, "Offset in the attachment bone's local coordinates.");
+                MenuLayout::StepVector("Leashed attachment offset", debugSettings.leashedAttachmentOffset, "Offset in the attachment bone's local coordinates.");
             }
             MenuLayout::Text("Parent bone", debugSettings.parentBone,
                 debugSettings.standaloneRope ? "Optional parent node inside the rope NIF. Leave empty to search beneath the NIF root. Matching child bones are traversed in order." :
