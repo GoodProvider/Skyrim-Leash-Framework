@@ -36,6 +36,8 @@ namespace LeashFramework {
 
         [[nodiscard]] bool Load(std::string_view a_parent, std::string_view a_match);
         void CaptureNodes(RE::NiAVObject& a_object);
+        void AttachTo(RE::NiNode& a_cellRoot, RE::NiNode& a_dynamicNode);
+        void Detach();
 
         StandaloneRopeSettings _settings;
         RE::NiPointer<RE::NiNode> _root;

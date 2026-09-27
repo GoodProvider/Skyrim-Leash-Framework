@@ -159,9 +159,13 @@ namespace LeashFramework {
             Reset();
             return LeashAnchor::BindResult::kFailed;
         }
-        if (_root && _actorRoot.get() == actorRoot && _attachment.get() == attachment && _cellRoot.get() == cellRoot &&
-            _dynamicNode.get() == dynamicNode && _root->parent == dynamicNode &&
+        if (_root && _actorRoot.get() == actorRoot && _attachment.get() == attachment &&
             std::ranges::all_of(_nodes, [&](const auto& a_pose) { return IsDescendantOf(a_pose.object.get(), _root.get()); })) {
+            // Crossing a cell seam only changes the scene parent; the rope writes world transforms directly, so the
+            // existing clone and its simulation state carry over.
+            if (_root->parent != dynamicNode) {
+                AttachTo(*cellRoot, *dynamicNode);
+            }
             return LeashAnchor::BindResult::kUnchanged;
         }
         Reset();
@@ -170,10 +174,27 @@ namespace LeashFramework {
         }
         _actorRoot.reset(actorRoot);
         _attachment.reset(attachment);
-        _cellRoot.reset(cellRoot);
-        _dynamicNode.reset(dynamicNode);
-        dynamicNode->AttachChild(_root.get(), true);
+        AttachTo(*cellRoot, *dynamicNode);
         return LeashAnchor::BindResult::kChanged;
+    }
+
+    void StandaloneRope::AttachTo(RE::NiNode& a_cellRoot, RE::NiNode& a_dynamicNode) {
+        Detach();
+        _cellRoot.reset(&a_cellRoot);
+        _dynamicNode.reset(&a_dynamicNode);
+        a_dynamicNode.AttachChild(_root.get(), true);
+    }
+
+    void StandaloneRope::Detach() {
+        if (_root && _root->parent) {
+            auto* parent = _root->parent;
+            parent->DetachChild(_root.get());
+            for (auto* node = parent; node; node = node->parent) {
+                node->UpdateWorldBound();
+            }
+        }
+        _dynamicNode.reset();
+        _cellRoot.reset();
     }
 
     RE::NiAVObject* StandaloneRope::GetRoot() const { return _root.get(); }
@@ -213,19 +234,11 @@ namespace LeashFramework {
 
     void StandaloneRope::Reset() {
         Hide();
-        if (_root && _root->parent) {
-            auto* parent = _root->parent;
-            parent->DetachChild(_root.get());
-            for (auto* node = parent; node; node = node->parent) {
-                node->UpdateWorldBound();
-            }
-        }
+        Detach();
         _bones.clear();
         _nodes.clear();
         _segmentLengths.clear();
         _root.reset();
-        _dynamicNode.reset();
-        _cellRoot.reset();
         _attachment.reset();
         _actorRoot.reset();
     }
