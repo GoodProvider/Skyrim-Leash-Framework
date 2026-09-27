@@ -259,7 +259,7 @@ namespace LeashFramework {
     bool LeashManager::ApplyStandalone(LeashDefinition a_definition, StandaloneRopeSettings a_settings) {
         a_definition.standalone = std::move(a_settings);
         if (!IsValid(a_definition) || !AnchorFormsExist(a_definition)) {
-            SKSE::log::warn("Standalone rope: rejected unsupported runtime or invalid leash settings");
+            SKSE::log::warn("Standalone rope: rejected invalid leash settings");
             return false;
         }
         auto* leashed = RE::TESForm::LookupByID<RE::Actor>(a_definition.leashedFormID);
@@ -690,7 +690,7 @@ namespace LeashFramework {
         if (a_definition.standalone) {
             const auto& rope = *a_definition.standalone;
             const auto& attachment = rope.leashedAttachment;
-            if (!StandaloneRope::IsSupported() || a_definition.meshOwner != LeashMeshOwner::kLeashed || rope.modelPath.empty() || attachment.boneName.empty() ||
+            if (a_definition.meshOwner != LeashMeshOwner::kLeashed || rope.modelPath.empty() || attachment.boneName.empty() ||
                 !std::isfinite(attachment.offsetX) || !std::isfinite(attachment.offsetY) || !std::isfinite(attachment.offsetZ)) {
                 return false;
             }

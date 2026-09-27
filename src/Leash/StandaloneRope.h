@@ -15,7 +15,6 @@ namespace LeashFramework {
         StandaloneRope(const StandaloneRope&) = delete;
         StandaloneRope& operator=(const StandaloneRope&) = delete;
 
-        [[nodiscard]] static bool IsSupported();
         [[nodiscard]] LeashAnchor::BindResult Bind(RE::Actor& a_leashed, std::string_view a_parent, std::string_view a_match);
         [[nodiscard]] RE::NiAVObject* GetRoot() const;
         [[nodiscard]] RE::NiAVObject* GetAttachment() const;

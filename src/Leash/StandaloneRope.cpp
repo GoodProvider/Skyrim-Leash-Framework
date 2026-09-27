@@ -27,19 +27,21 @@ namespace LeashFramework {
                 }
             }
         }
+
+        RE::NiNode* GetDynamicNode(RE::TESObjectCELL& a_cell) {
+            using func_t = RE::NiAVObject*(RE::TESObjectCELL*);
+            static REL::Relocation<func_t> func{REL::VariantID(18916, 19339, 0x28BF00)};
+            auto* node = func(&a_cell);
+            return node ? node->AsNode() : nullptr;
+        }
     }
 
     StandaloneRope::StandaloneRope(StandaloneRopeSettings a_settings) : _settings(std::move(a_settings)) {}
 
     StandaloneRope::~StandaloneRope() { Reset(); }
 
-    bool StandaloneRope::IsSupported() {
-        // AE and VR remain disabled until their model loading and cell attachment paths are verified.
-        return REL::Module::IsSE();
-    }
-
     bool StandaloneRope::Load(std::string_view a_parent, std::string_view a_match) {
-        if (_loadFailed || !IsSupported()) {
+        if (_loadFailed) {
             return false;
         }
         _loadFailed = true;
@@ -137,19 +139,11 @@ namespace LeashFramework {
     }
 
     LeashAnchor::BindResult StandaloneRope::Bind(RE::Actor& a_leashed, std::string_view a_parent, std::string_view a_match) {
-        if (!IsSupported()) {
-            return LeashAnchor::BindResult::kFailed;
-        }
         auto* actorRoot = a_leashed.Get3D(false);
         auto* cell = a_leashed.GetParentCell();
         auto* loaded = cell && cell->IsAttached() ? cell->GetRuntimeData().loadedData : nullptr;
         auto* cellRoot = loaded ? loaded->cell3D.get() : nullptr;
-        RE::NiNode* dynamicNode{};
-        // SE's particle/debris attach path uses child 4 of the loaded cell root.
-        if (cellRoot && cellRoot->GetChildren().size() > 4) {
-            const auto& child = cellRoot->GetChildren()[4];
-            dynamicNode = child ? child->AsNode() : nullptr;
-        }
+        auto* dynamicNode = cellRoot ? GetDynamicNode(*cell) : nullptr;
         if (!actorRoot || !dynamicNode) {
             Reset();
             return LeashAnchor::BindResult::kFailed;

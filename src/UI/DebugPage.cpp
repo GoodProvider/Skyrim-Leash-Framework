@@ -598,9 +598,6 @@ namespace LeashFramework::UI::DebugPage {
             }
             if (debugSettings.standaloneRope) {
                 debugSettings.holderOwnsLeash = false;
-                if (!StandaloneRope::IsSupported()) {
-                    MenuLayout::Note("Standalone ropes are currently available on Skyrim SE only. AE and VR support is pending.");
-                }
             }
             MenuLayout::Columns(
                 [] { RenderActorDropdown("Leashed actor", selectedLeashed); },
@@ -818,9 +815,7 @@ namespace LeashFramework::UI::DebugPage {
             const auto apply = [&] {
                 MenuLayout::Panel("04 / Apply test leash", debugSettings.standaloneRope ? "Spawn the configured NIF without equipping armor." : "Equip a rope in Equipment; check its bones in Skeleton.", [&] {
                     MenuLayout::Toggle("Keep leash in saves", debugSettings.persistent, "Save this leash with the game. Temporary test leashes are discarded when loading.");
-                    ImGuiMCP::BeginDisabled(debugSettings.standaloneRope && !StandaloneRope::IsSupported());
                     applyRequested = MenuLayout::Button("Apply test leash", {-1.0F, 0.0F});
-                    ImGuiMCP::EndDisabled();
                     MenuLayout::Feedback(applyStatus);
                 });
             };
