@@ -36,6 +36,10 @@ namespace LeashFramework::UI {
         float maxLength{300.0F};
         RE::NiPoint3 attachmentOffset{};
         bool holderOwnsLeash{};
+        bool standaloneRope{};
+        char ropeModelPath[260]{};
+        char leashedAttachmentBone[128]{"NPC Neck [Neck]"};
+        RE::NiPoint3 leashedAttachmentOffset{};
         int closedHand{};
         bool persistent{true};
         bool enablePullDiagnostics{};
@@ -45,7 +49,8 @@ namespace LeashFramework::UI {
         struct glaze {
             using T = DebugSettings;
             static constexpr auto value = glz::object(
-                &T::parentBone, &T::leashBoneMatch, &T::minLength, &T::maxLength, &T::attachmentOffset, &T::holderOwnsLeash, &T::closedHand, &T::persistent, &T::enablePullDiagnostics, &T::armorEntries);
+                &T::parentBone, &T::leashBoneMatch, &T::minLength, &T::maxLength, &T::attachmentOffset, &T::holderOwnsLeash, &T::standaloneRope, &T::ropeModelPath,
+                &T::leashedAttachmentBone, &T::leashedAttachmentOffset, &T::closedHand, &T::persistent, &T::enablePullDiagnostics, &T::armorEntries);
         };
     };
 

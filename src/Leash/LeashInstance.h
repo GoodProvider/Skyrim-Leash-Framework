@@ -1,6 +1,7 @@
 #pragma once
 
 #include <span>
+#include <memory>
 #include <vector>
 
 #include "../Animation/PullPoseController.h"
@@ -12,6 +13,7 @@
 #include "LeashDefinition.h"
 #include "LeashTeleportController.h"
 #include "PullController.h"
+#include "StandaloneRope.h"
 
 namespace LeashFramework::Physics {
     class ActorBodyCollision;
@@ -20,9 +22,13 @@ namespace LeashFramework::Physics {
 namespace LeashFramework {
     class LeashInstance {
     public:
-        LeashInstance(LeashDefinition a_definition, PullController& a_pullController, Recovery::ForcedRecoveryController& a_recoveryController, Animation::PullPoseController& a_pullPoseController);
+        LeashInstance(LeashDefinition a_definition, PullController& a_pullController, Recovery::ForcedRecoveryController& a_recoveryController, Animation::PullPoseController& a_pullPoseController,
+            std::unique_ptr<StandaloneRope> a_standalone = {});
 
         [[nodiscard]] const LeashDefinition& GetDefinition() const;
+        [[nodiscard]] bool IsStandalone() const;
+        [[nodiscard]] RE::NiAVObject* GetStandaloneRoot() const;
+        void ResetMesh();
         void SetMinLength(float a_length) noexcept;
         void SetMaxLength(float a_length) noexcept;
         void SetRagdollOverride(std::optional<bool> a_enabled);
@@ -43,7 +49,7 @@ namespace LeashFramework {
         friend class LeashTeleportController;
 
         [[nodiscard]] bool Bind(RE::Actor& a_meshOwner);
-        void ResetBinding();
+        void ResetBinding(bool a_releaseStandalone = true);
         void ReadNeutralPose();
         void UpdateGeometryWorldBounds();
         void TransformPreparedPose(const RE::NiAVObject& a_object, RE::NiPoint3& a_position, RE::NiMatrix3& a_rotation) const;
@@ -51,6 +57,7 @@ namespace LeashFramework {
 
         LeashDefinition _definition;
         LeashAnchor _anchor;
+        std::unique_ptr<StandaloneRope> _standalone;
         PullController& _pullController;
         Recovery::ForcedRecoveryController& _recoveryController;
         Animation::PullPoseController& _pullPoseController;

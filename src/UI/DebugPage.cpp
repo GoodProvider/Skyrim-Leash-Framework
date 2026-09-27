@@ -281,13 +281,14 @@ namespace LeashFramework::UI::DebugPage {
                 return;
             }
 
-            auto* root = actor->Get3D(false);
+            auto* root = debugSettings.standaloneRope ? LeashManager::GetSingleton().GetStandaloneRoot(actor) : actor->Get3D(false);
             if (!root) {
-                skeletonStatus = Locale::Format("{0} has no loaded third-person skeleton.", DescribeActor(actor));
+                skeletonStatus = debugSettings.standaloneRope ? Locale::Text("Apply a standalone test leash before inspecting its rope skeleton.") :
+                    Locale::Format("{0} has no loaded third-person skeleton.", DescribeActor(actor));
                 return;
             }
 
-            auto* npcObject = root->GetObjectByName(RE::BSFixedString("NPC"));
+            auto* npcObject = debugSettings.standaloneRope ? root : root->GetObjectByName(RE::BSFixedString("NPC"));
             auto* npcNode = npcObject ? npcObject->AsNode() : nullptr;
             if (!npcNode) {
                 skeletonStatus = Locale::Format("{0} has no loaded NPC skeleton node.", DescribeActor(actor));
@@ -300,7 +301,7 @@ namespace LeashFramework::UI::DebugPage {
                 if (!skin || !skin->bones) {
                     return RE::BSVisit::BSVisitControl::kContinue;
                 }
-                for (std::uint32_t index = 0; index < skin->numMatrices; ++index) {
+                for (std::uint32_t index = 0, count = skin->skinData ? skin->skinData->GetBoneCount() : skin->numMatrices; index < count; ++index) {
                     if (auto* bone = skin->bones[index]; bone && bone->AsNode()) {
                         skinnedBones.insert(bone);
                     }
@@ -308,12 +309,12 @@ namespace LeashFramework::UI::DebugPage {
                 return RE::BSVisit::BSVisitControl::kContinue;
             });
 
-            const bool requireSMPMarker = ContainsSMPBone(*npcNode);
+            const bool requireSMPMarker = !debugSettings.standaloneRope && ContainsSMPBone(*npcNode);
             std::unordered_set<RE::NiAVObject*> visibleBones{npcNode};
             std::unordered_set<RE::NiAVObject*> likelyCandidates;
             CollectVisibleBonePointers(*npcNode, npcNode, skinnedBones, requireSMPMarker, visibleBones, likelyCandidates);
 
-            skeletonDumpActor = DescribeActor(actor);
+            skeletonDumpActor = debugSettings.standaloneRope ? Locale::Format("Standalone rope for {0}", DescribeActor(actor)) : DescribeActor(actor);
             std::size_t nodeCount{};
             skeletonDump = CaptureVisibleSkeleton(*npcNode, visibleBones, likelyCandidates, nodeCount);
             skeletonStatus = Locale::Format("Displayed {0} skeleton node(s) for {1}.", nodeCount, skeletonDumpActor);
@@ -479,8 +480,8 @@ namespace LeashFramework::UI::DebugPage {
             }
         }
 
-        void RenderActiveLeashLength(RE::Actor* a_leashed, float a_length, bool a_minimum) {
-            ImGuiMCP::SetNextItemWidth(-1.0F);
+        void RenderActiveLeashLength(RE::Actor* a_leashed, float a_length, bool a_minimum, float a_width) {
+            ImGuiMCP::SetNextItemWidth(a_width);
             ImGuiMCP::BeginDisabled(!a_leashed);
             if (ImGuiMCP::InputFloat(a_minimum ? "##MinLength" : "##MaxLength", &a_length, 1.0F, 10.0F, "%.1f", ImGuiMCP::ImGuiInputTextFlags_EnterReturnsTrue)) {
                 auto& manager = LeashManager::GetSingleton();
@@ -499,50 +500,85 @@ namespace LeashFramework::UI::DebugPage {
                                       : "Maximum follow distance. Must be positive and at least the current minimum.");
         }
 
+        void RenderActiveLeashActor(std::uint32_t a_formID, const char* a_help = nullptr) {
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_formID);
+            const auto* name = actor ? actor->GetDisplayFullName() : Locale::Text("Unavailable");
+            ImGuiMCP::AlignTextToFramePadding();
+            ImGuiMCP::TextUnformatted(name && name[0] != '\0' ? name : Locale::Text("Unnamed actor"));
+            if (ImGuiMCP::IsItemHovered() && ImGuiMCP::BeginTooltip()) {
+                ImGuiMCP::TextUnformatted(DescribeActor(a_formID).c_str());
+                if (a_help) {
+                    ImGuiMCP::TextUnformatted(Locale::Text(a_help));
+                }
+                ImGuiMCP::EndTooltip();
+            }
+        }
+
         void RenderActiveLeashes(const std::vector<LeashDefinition>& a_definitions) {
             if (a_definitions.empty()) {
                 ImGuiMCP::TextUnformatted(Locale::Text("No actors are currently leashed."));
                 return;
             }
-            MenuLayout::Note("Press Enter to apply a typed distance; +/- buttons apply immediately. Disconnect removes only that leash.");
+            MenuLayout::Note("Press Enter to apply a typed distance; +/- buttons apply immediately. X removes only that leash.");
 
+            const auto em = ImGuiMCP::GetFontSize();
+            const auto& style = *ImGuiMCP::GetStyle();
+            const auto stepWidth = 2.0F * (ImGuiMCP::GetFrameHeight() + style.ItemInnerSpacing.x);
+            const auto inputWidth = (em * 9.0F - stepWidth) * 0.5F + stepWidth;
+            const auto textWidth = [](const char* a_label) {
+                ImGuiMCP::ImVec2 size;
+                ImGuiMCP::CalcTextSize(&size, Locale::Text(a_label), nullptr, false, -1.0F);
+                return size.x;
+            };
+            const auto minimumWidth = std::max(inputWidth, textWidth("Min distance"));
+            const auto maximumWidth = std::max(inputWidth, textWidth("Max distance"));
+            const auto disconnectWidth = ImGuiMCP::GetFrameHeight();
             constexpr auto tableFlags = ImGuiMCP::ImGuiTableFlags_BordersInnerH | ImGuiMCP::ImGuiTableFlags_RowBg | ImGuiMCP::ImGuiTableFlags_SizingStretchProp;
             if (!ImGuiMCP::BeginTable("ActiveLeashes", 6, tableFlags)) {
                 return;
             }
-
-            ImGuiMCP::TableSetupColumn(Locale::Text("Leashed actor"), ImGuiMCP::ImGuiTableColumnFlags_WidthStretch);
-            ImGuiMCP::TableSetupColumn(Locale::Text("Leasher"), ImGuiMCP::ImGuiTableColumnFlags_WidthStretch);
-            ImGuiMCP::TableSetupColumn(Locale::Text("Physical owner"), ImGuiMCP::ImGuiTableColumnFlags_WidthStretch);
-            ImGuiMCP::TableSetupColumn(Locale::Text("Min distance"), ImGuiMCP::ImGuiTableColumnFlags_WidthFixed, ImGuiMCP::GetFontSize() * 9.0F);
-            ImGuiMCP::TableSetupColumn(Locale::Text("Max distance"), ImGuiMCP::ImGuiTableColumnFlags_WidthFixed, ImGuiMCP::GetFontSize() * 9.0F);
-            ImGuiMCP::TableSetupColumn("", ImGuiMCP::ImGuiTableColumnFlags_WidthFixed);
+            ImGuiMCP::TableSetupColumn(Locale::Text("Leashed actor"), ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.0F);
+            ImGuiMCP::TableSetupColumn(Locale::Text("Leasher"), ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.0F);
+            ImGuiMCP::TableSetupColumn(Locale::Text("Physical owner"), ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.0F);
+            ImGuiMCP::TableSetupColumn(Locale::Text("Min distance"), ImGuiMCP::ImGuiTableColumnFlags_WidthFixed, minimumWidth);
+            ImGuiMCP::TableSetupColumn(Locale::Text("Max distance"), ImGuiMCP::ImGuiTableColumnFlags_WidthFixed, maximumWidth);
+            ImGuiMCP::TableSetupColumn("", ImGuiMCP::ImGuiTableColumnFlags_WidthFixed, disconnectWidth);
             ImGuiMCP::TableHeadersRow();
+
             for (const auto& definition : a_definitions) {
                 ImGuiMCP::PushID(static_cast<int>(definition.leashedFormID));
                 auto* leashed = RE::TESForm::LookupByID<RE::Actor>(definition.leashedFormID);
                 ImGuiMCP::TableNextRow();
                 ImGuiMCP::TableSetColumnIndex(0);
-                const auto leashedLabel = DescribeActor(definition.leashedFormID);
-                ImGuiMCP::TextWrapped("%s", leashedLabel.c_str());
-                MenuLayout::Help(definition.persistent ? "Persistent leash / included in saves" : "Temporary leash / current session only");
+                RenderActiveLeashActor(definition.leashedFormID, definition.persistent ? "Persistent leash / included in saves" : "Temporary leash / current session only");
                 ImGuiMCP::TableSetColumnIndex(1);
-                const auto holderLabel = definition.holderFormID != 0 ? DescribeActor(definition.holderFormID) : std::string{Locale::Text("World position")};
-                ImGuiMCP::TextWrapped("%s", holderLabel.c_str());
+                if (definition.holderFormID != 0) {
+                    RenderActiveLeashActor(definition.holderFormID);
+                } else {
+                    ImGuiMCP::AlignTextToFramePadding();
+                    ImGuiMCP::TextUnformatted(Locale::Text("World position"));
+                    MenuLayout::Help("World position");
+                }
                 ImGuiMCP::TableSetColumnIndex(2);
-                const auto meshOwnerFormID = definition.meshOwner == LeashMeshOwner::kHolder ? definition.holderFormID : definition.leashedFormID;
-                const auto meshOwnerLabel = DescribeActor(meshOwnerFormID);
-                ImGuiMCP::TextWrapped("%s", meshOwnerLabel.c_str());
+                if (LeashManager::GetSingleton().IsStandalone(leashed)) {
+                    ImGuiMCP::AlignTextToFramePadding();
+                    ImGuiMCP::TextUnformatted(Locale::Text("Standalone NIF"));
+                    MenuLayout::Help("Standalone NIF");
+                } else {
+                    RenderActiveLeashActor(definition.meshOwner == LeashMeshOwner::kHolder ? definition.holderFormID : definition.leashedFormID);
+                }
                 ImGuiMCP::TableSetColumnIndex(3);
-                RenderActiveLeashLength(leashed, definition.minLength, true);
+                RenderActiveLeashLength(leashed, definition.minLength, true, inputWidth);
                 ImGuiMCP::TableSetColumnIndex(4);
-                RenderActiveLeashLength(leashed, definition.maxLength, false);
+                RenderActiveLeashLength(leashed, definition.maxLength, false, inputWidth);
                 ImGuiMCP::TableSetColumnIndex(5);
-                if (MenuLayout::Button("Disconnect")) {
+                if (MenuLayout::Button("Disconnect", {disconnectWidth, disconnectWidth}, "X")) {
                     auto* holder = RE::TESForm::LookupByID<RE::Actor>(definition.holderFormID);
                     const auto disconnected = LeashManager::GetSingleton().Disconnect(holder, leashed);
+                    const auto leashedLabel = DescribeActor(definition.leashedFormID);
                     activeStatus = disconnected ? Locale::Format("Freed {0}.", leashedLabel) : Locale::Format("Could not free {0}.", leashedLabel);
                 }
+                MenuLayout::Help("Disconnect removes only this leash.");
                 ImGuiMCP::PopID();
             }
             ImGuiMCP::EndTable();
@@ -555,6 +591,17 @@ namespace LeashFramework::UI::DebugPage {
             const auto previousHolder = selectedHolder;
             const auto previousLeashed = selectedLeashed;
             const auto previousOwner = debugSettings.holderOwnsLeash;
+            if (MenuLayout::Toggle("Standalone rope (SE)", debugSettings.standaloneRope, "Spawn a rope NIF without equipping either actor. Enable Keep leash in saves to restore it when loading.")) {
+                applyStatus.clear();
+                skeletonDump.clear();
+                skeletonStatus.clear();
+            }
+            if (debugSettings.standaloneRope) {
+                debugSettings.holderOwnsLeash = false;
+                if (!StandaloneRope::IsSupported()) {
+                    MenuLayout::Note("Standalone ropes are currently available on Skyrim SE only. AE and VR support is pending.");
+                }
+            }
             MenuLayout::Columns(
                 [] { RenderActorDropdown("Leashed actor", selectedLeashed); },
                 [] {
@@ -566,6 +613,10 @@ namespace LeashFramework::UI::DebugPage {
                     }
                 },
                 [] {
+                    if (debugSettings.standaloneRope) {
+                        MenuLayout::Note("The rope is a separate scene object; neither actor needs equipment.");
+                        return;
+                    }
                     if (MenuLayout::Choice("Physical leash owner", debugSettings.holderOwnsLeash, kMeshOwnerLabels)) {
                         if (debugSettings.holderOwnsLeash) {
                             selectedAnchorType = DebugAnchorType::kActorBone;
@@ -620,7 +671,13 @@ namespace LeashFramework::UI::DebugPage {
         }
 
         void RenderRopeSettings() {
+            if (debugSettings.standaloneRope) {
+                MenuLayout::Text("Rope NIF path", debugSettings.ropeModelPath, "Path relative to Data/Meshes. Include the rope skeleton and skinned geometry; omit NIF collision objects.");
+                MenuLayout::Text("Bone on leashed actor", debugSettings.leashedAttachmentBone, "Exact third-person bone name for the first rope endpoint.");
+                MenuLayout::Vector("Leashed attachment offset", debugSettings.leashedAttachmentOffset, "Offset in the attachment bone's local coordinates.");
+            }
             MenuLayout::Text("Parent bone", debugSettings.parentBone,
+                debugSettings.standaloneRope ? "Optional parent node inside the rope NIF. Leave empty to search beneath the NIF root. Matching child bones are traversed in order." :
                 "Exact parent bone name on the physical leash owner. Use the Skeleton tab to inspect available bones.");
             MenuLayout::Text("Leash bone match", debugSettings.leashBoneMatch,
                 "Match text for bones beneath the parent. At least two matching bones are required.");
@@ -648,6 +705,31 @@ namespace LeashFramework::UI::DebugPage {
             std::string anchorLabel;
             if (!leashed) {
                 applyStatus = Locale::Text("Could not apply leash. Select an available leashed actor.");
+            } else if (debugSettings.standaloneRope) {
+                LeashDefinition definition{
+                    .holderFormID = selectedAnchorType == DebugAnchorType::kWorldPosition ? 0 : selectedHolder,
+                    .leashedFormID = selectedLeashed,
+                    .parentBone = debugSettings.parentBone,
+                    .leashBoneMatch = debugSettings.leashBoneMatch,
+                    .minLength = debugSettings.minLength,
+                    .maxLength = debugSettings.maxLength,
+                    .persistent = debugSettings.persistent};
+                switch (selectedAnchorType) {
+                    case DebugAnchorType::kWorldPosition:
+                        definition.anchor = WorldPositionAnchor{selectedWorldCellFormID, selectedWorldPosition.x, selectedWorldPosition.y, selectedWorldPosition.z};
+                        break;
+                    case DebugAnchorType::kActorBone:
+                        definition.anchor = ActorBoneAnchor{selectedAttachmentBone, debugSettings.attachmentOffset.x, debugSettings.attachmentOffset.y, debugSettings.attachmentOffset.z};
+                        break;
+                    default:
+                        definition.anchor = HandAnchor{selectedAnchorType == DebugAnchorType::kRightHand};
+                        break;
+                }
+                applied = LeashManager::GetSingleton().ApplyStandalone(std::move(definition), StandaloneRopeSettings{
+                    .modelPath = debugSettings.ropeModelPath,
+                    .leashedAttachment = {debugSettings.leashedAttachmentBone, debugSettings.leashedAttachmentOffset.x, debugSettings.leashedAttachmentOffset.y, debugSettings.leashedAttachmentOffset.z}});
+                applyStatus = Locale::Text(applied ? "Standalone leash created. No rope equipment is needed; inspect its bones in Skeleton." :
+                    "Could not create standalone rope. Requires SE, loaded actors/cell, valid bone names and a self-contained NIF. Check the plugin log.");
             } else if (debugSettings.holderOwnsLeash) {
                 if (!holder) {
                     applyStatus = Locale::Text("Could not apply leash. Select an available leasher.");
@@ -724,7 +806,7 @@ namespace LeashFramework::UI::DebugPage {
 
         void RenderApplyLeash() {
             bool applyRequested{};
-            MenuLayout::Panel("01 / Actors", "Choose who is leashed and who wears the physical rope.", RenderTestActors);
+            MenuLayout::Panel("01 / Actors", "Choose the actors and rope source.", RenderTestActors);
             const auto anchor = [] { MenuLayout::Panel("02 / Anchor", "Choose where the free end of the rope attaches.", RenderAnchorSettings); };
             const auto rope = [] {
                 MenuLayout::Panel("03 / Rope bones & range", "Identify the rope and set its follow distances.", [] {
@@ -734,9 +816,11 @@ namespace LeashFramework::UI::DebugPage {
                 });
             };
             const auto apply = [&] {
-                MenuLayout::Panel("04 / Apply test leash", "Equip a rope in Equipment; check its bones in Skeleton.", [&] {
+                MenuLayout::Panel("04 / Apply test leash", debugSettings.standaloneRope ? "Spawn the configured NIF without equipping armor." : "Equip a rope in Equipment; check its bones in Skeleton.", [&] {
                     MenuLayout::Toggle("Keep leash in saves", debugSettings.persistent, "Save this leash with the game. Temporary test leashes are discarded when loading.");
+                    ImGuiMCP::BeginDisabled(debugSettings.standaloneRope && !StandaloneRope::IsSupported());
                     applyRequested = MenuLayout::Button("Apply test leash", {-1.0F, 0.0F});
+                    ImGuiMCP::EndDisabled();
                     MenuLayout::Feedback(applyStatus);
                 });
             };
@@ -788,6 +872,10 @@ namespace LeashFramework::UI::DebugPage {
 
         void RenderEquipment() {
             MenuLayout::Panel("Actors & mesh owner", "Equipment is applied to the selected physical leash owner.", RenderTestActors);
+            if (debugSettings.standaloneRope) {
+                MenuLayout::Note("Standalone ropes do not use equipment. Configure a NIF in Test leash.");
+                return;
+            }
             const auto ownerID = debugSettings.holderOwnsLeash ? selectedHolder : selectedLeashed;
             ImGuiMCP::TextWrapped("%s", Locale::Format("Equip on: {0}", DescribeActor(ownerID)).c_str());
             MenuLayout::Columns(
@@ -801,6 +889,9 @@ namespace LeashFramework::UI::DebugPage {
 
     void SetSettings(const DebugSettings& a_settings) {
         debugSettings = a_settings;
+        if (debugSettings.standaloneRope) {
+            debugSettings.holderOwnsLeash = false;
+        }
         if (debugSettings.closedHand != 1 && debugSettings.closedHand != 2) {
             debugSettings.closedHand = 0;
         }

@@ -107,6 +107,7 @@ namespace LeashFramework {
     void LeashManager::HandlePreLoadGame() {
         for (auto& leash : _leashes) {
             leash->ReleaseControl();
+            leash->ResetMesh();
         }
     }
 
@@ -138,6 +139,9 @@ namespace LeashFramework {
                         ++releasedControls;
                     }
                     leash->ResetSimulation();
+                    if (leash->IsStandalone()) {
+                        leash->ResetMesh();
+                    }
                 }
                 if (releasedControls > 0) {
                     SKSE::log::info("Released {} active control state(s) before player positioning", releasedControls);
@@ -252,7 +256,48 @@ namespace LeashFramework {
         return ApplyDefinition(std::move(definition));
     }
 
-    bool LeashManager::ApplyDefinition(LeashDefinition a_definition) {
+    bool LeashManager::ApplyStandalone(LeashDefinition a_definition, StandaloneRopeSettings a_settings) {
+        a_definition.standalone = std::move(a_settings);
+        if (!IsValid(a_definition) || !AnchorFormsExist(a_definition)) {
+            SKSE::log::warn("Standalone rope: rejected unsupported runtime or invalid leash settings");
+            return false;
+        }
+        auto* leashed = RE::TESForm::LookupByID<RE::Actor>(a_definition.leashedFormID);
+        if (!leashed) {
+            return false;
+        }
+        auto* holder = RE::TESForm::LookupByID<RE::Actor>(a_definition.holderFormID);
+        LeashAnchor anchor{a_definition};
+        if (anchor.Bind(holder, holder) == LeashAnchor::BindResult::kFailed) {
+            SKSE::log::warn("Standalone rope: could not bind the holder/world endpoint for {:08X}", a_definition.leashedFormID);
+            return false;
+        }
+        auto rope = std::make_unique<StandaloneRope>(*a_definition.standalone);
+        if (rope->Bind(*leashed, a_definition.parentBone, a_definition.leashBoneMatch) == LeashAnchor::BindResult::kFailed) {
+            SKSE::log::warn("Standalone rope: creation failed for {:08X}; check the NIF, attachment bone and loaded cell", a_definition.leashedFormID);
+            return false;
+        }
+        return ApplyDefinition(std::move(a_definition), std::move(rope));
+    }
+
+    bool LeashManager::IsStandalone(RE::Actor* a_leashed) const {
+        return a_leashed && std::ranges::any_of(_leashes, [&](const auto& a_leash) {
+            return a_leash->GetDefinition().leashedFormID == a_leashed->GetFormID() && a_leash->IsStandalone();
+        });
+    }
+
+    RE::NiAVObject* LeashManager::GetStandaloneRoot(RE::Actor* a_leashed) const {
+        if (a_leashed) {
+            for (const auto& leash : _leashes) {
+                if (leash->GetDefinition().leashedFormID == a_leashed->GetFormID()) {
+                    return leash->GetStandaloneRoot();
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    bool LeashManager::ApplyDefinition(LeashDefinition a_definition, std::unique_ptr<StandaloneRope> a_standalone) {
         auto& definition = a_definition;
         if (!IsValid(definition)) {
             SKSE::log::warn("ApplyLeash rejected invalid arguments for {:08X}->{:08X}", definition.holderFormID, definition.leashedFormID);
@@ -275,7 +320,7 @@ namespace LeashFramework {
         if (replaced) {
             SendLeashEvent("LeashFramework_OnUnleash", "replaced", leashedFormID);
         }
-        _leashes.push_back(std::make_unique<LeashInstance>(std::move(definition), _pullController, _recoveryController, _pullPoseController));
+        _leashes.push_back(std::make_unique<LeashInstance>(std::move(definition), _pullController, _recoveryController, _pullPoseController, std::move(a_standalone)));
         SortByPoseDependencies();
         RefreshActorFactions(affectedActorFormIDs);
         SendLeashEvent("LeashFramework_OnLeash", replaced ? "replaced" : "applied", leashedFormID);
@@ -642,6 +687,14 @@ namespace LeashFramework {
     }
 
     bool LeashManager::IsValid(const LeashDefinition& a_definition) {
+        if (a_definition.standalone) {
+            const auto& rope = *a_definition.standalone;
+            const auto& attachment = rope.leashedAttachment;
+            if (!StandaloneRope::IsSupported() || a_definition.meshOwner != LeashMeshOwner::kLeashed || rope.modelPath.empty() || attachment.boneName.empty() ||
+                !std::isfinite(attachment.offsetX) || !std::isfinite(attachment.offsetY) || !std::isfinite(attachment.offsetZ)) {
+                return false;
+            }
+        }
         const auto validMeshOwner = a_definition.meshOwner == LeashMeshOwner::kLeashed || a_definition.meshOwner == LeashMeshOwner::kHolder;
         const auto validClosedHand = a_definition.closedHand == ClosedHand::kNone ||
                                      (a_definition.meshOwner == LeashMeshOwner::kHolder && (a_definition.closedHand == ClosedHand::kRight || a_definition.closedHand == ClosedHand::kLeft));
@@ -658,7 +711,7 @@ namespace LeashFramework {
                 }
             },
             a_definition.anchor);
-        return validMeshOwner && validClosedHand && validAnchor && a_definition.leashedFormID != 0 && a_definition.holderFormID != a_definition.leashedFormID && !a_definition.parentBone.empty() &&
+        return validMeshOwner && validClosedHand && validAnchor && a_definition.leashedFormID != 0 && a_definition.holderFormID != a_definition.leashedFormID && (a_definition.standalone || !a_definition.parentBone.empty()) &&
                !a_definition.leashBoneMatch.empty() && std::isfinite(a_definition.minLength) && std::isfinite(a_definition.maxLength) && a_definition.minLength >= 0.0F &&
                a_definition.maxLength >= a_definition.minLength && a_definition.maxLength > 0.0F;
     }

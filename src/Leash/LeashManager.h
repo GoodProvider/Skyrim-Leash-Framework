@@ -12,6 +12,7 @@
 #include "LeashDefinition.h"
 #include "LeashTeleportController.h"
 #include "PullController.h"
+#include "StandaloneRope.h"
 
 namespace LeashFramework {
     class LeashInstance;
@@ -28,6 +29,9 @@ namespace LeashFramework {
         [[nodiscard]] bool ApplyHolderOwnedLeashToBone(RE::Actor* a_holder, RE::Actor* a_leashed, std::string_view a_leashedBone, float a_offsetX, float a_offsetY, float a_offsetZ, std::string_view a_parentBone, std::string_view a_leashBoneMatch, float a_minLength, float a_maxLength, bool a_persistent, std::int32_t a_closedHand);
         [[nodiscard]] bool ApplyAtPosition(RE::Actor* a_leashed, RE::TESObjectCELL* a_anchorCell, float a_x, float a_y, float a_z, std::string_view a_parentBone, std::string_view a_leashBoneMatch, float a_minLength,
             float a_maxLength, bool a_persistent);
+        [[nodiscard]] bool ApplyStandalone(LeashDefinition a_definition, StandaloneRopeSettings a_settings);
+        [[nodiscard]] bool IsStandalone(RE::Actor* a_leashed) const;
+        [[nodiscard]] RE::NiAVObject* GetStandaloneRoot(RE::Actor* a_leashed) const;
         [[nodiscard]] bool Disconnect(RE::Actor* a_holder, RE::Actor* a_leashed);
         [[nodiscard]] bool UnleashAll(RE::Actor* a_actor);
         [[nodiscard]] bool IsLeashed(RE::Actor* a_actor) const;
@@ -68,7 +72,7 @@ namespace LeashFramework {
         LeashManager();
         RE::BSEventNotifyControl ProcessEvent(const RE::PositionPlayerEvent* a_event, RE::BSTEventSource<RE::PositionPlayerEvent>* a_eventSource) override;
         RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent* a_event, RE::BSTEventSource<RE::TESObjectLoadedEvent>* a_eventSource) override;
-        [[nodiscard]] bool ApplyDefinition(LeashDefinition a_definition);
+        [[nodiscard]] bool ApplyDefinition(LeashDefinition a_definition, std::unique_ptr<StandaloneRope> a_standalone = {});
         [[nodiscard]] bool SetOverride(RE::Actor* a_leashed, std::int32_t a_mode, void (LeashInstance::*a_setter)(std::optional<bool>));
         [[nodiscard]] static bool IsValid(const LeashDefinition& a_definition);
         void SortByPoseDependencies();

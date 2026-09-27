@@ -21,6 +21,11 @@ namespace LeashFramework {
         float offsetZ{};
     };
 
+    struct StandaloneRopeSettings {
+        std::string modelPath;
+        ActorBoneAnchor leashedAttachment{"NPC Neck [Neck]"};
+    };
+
     struct WorldPositionAnchor {
         std::uint32_t cellFormID{};
         float x{};
@@ -48,5 +53,6 @@ namespace LeashFramework {
         float maxLength{};
         bool persistent{};
         LeashOverrides overrides{};
+        std::optional<StandaloneRopeSettings> standalone;
     };
 }  // namespace LeashFramework
