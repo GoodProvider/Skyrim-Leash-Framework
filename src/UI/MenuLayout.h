@@ -16,6 +16,7 @@
 
 namespace LeashFramework::UI::MenuLayout {
     inline constexpr ImGuiMCP::ImVec4 kAccent{0.72F, 0.16F, 0.14F, 1.0F};
+    inline constexpr ImGuiMCP::ImVec4 kSuccess{0.40F, 0.82F, 0.42F, 1.0F};
 
     inline constexpr auto kColors = std::to_array<std::pair<ImGuiMCP::ImGuiCol, ImGuiMCP::ImVec4>>({
         {ImGuiMCP::ImGuiCol_Text, {0.93F, 0.93F, 0.90F, 1.0F}},
@@ -284,11 +285,11 @@ namespace LeashFramework::UI::MenuLayout {
         }
     }
 
-    inline void Feedback(const std::string& a_message) {
+    inline void Status(const std::string& a_message) {
         if (!a_message.empty()) {
-            ImGuiMCP::Spacing();
-            ImGuiMCP::TextColored(kAccent, "%s", Locale::Text("Last result"));
+            ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_Text, kSuccess);
             ImGuiMCP::TextWrapped("%s", a_message.c_str());
+            ImGuiMCP::PopStyleColor();
         }
     }
 }

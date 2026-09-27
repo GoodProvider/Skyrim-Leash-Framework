@@ -65,7 +65,16 @@ namespace LeashFramework::UI {
         bool enablePullDiagnostics{};
         std::array<ArmorEntry, 5> armorEntries{ArmorEntry{"Leash.esm", "800 #Body Rope"}, ArmorEntry{"Leash.esm", "804 #Neck Rope"}, ArmorEntry{"Leash.esm", "806 #Neck Chain"},
             ArmorEntry{"Leash.esm", "32ce #Magic Rope"}, ArmorEntry{"Leash.esm", "d69 #Leasher-held shield Leash"}};
-        std::vector<TestLeashPreset> testLeashPresets;
+        std::vector<TestLeashPreset> testLeashPresets{TestLeashPreset{.name = "Standalone Neck-leash longish",
+            .standaloneRope = true,
+            .ropeModelPath = "Leash/neck_chain.nif",
+            .leashedAttachmentBone = "NPC Neck [Neck]",
+            .leashedAttachmentOffset = {0.0F, 7.5F, 0.6F},
+            .parentBone = "Leash1_0",
+            .leashBoneMatch = "Leash1_1",
+            .minLength = 200.0F,
+            .maxLength = 300.0F,
+            .persistent = true}};
 
         struct glaze {
             using T = DebugSettings;

@@ -84,12 +84,9 @@ namespace LeashFramework::Hooks {
     }
 
     void FrameHook::OnFrameUpdate() {
-        LF_PROFILE_REPORT();
-        {
-            LF_PROFILE_SCOPE("Frame/Main");
-            LeashManager::GetSingleton().Tick(deltaTimeStub);
-        }
         _originalFrameUpdate();
+        LF_PROFILE_SCOPE("Frame/Main");
+        LeashManager::GetSingleton().Tick(deltaTimeStub);
     }
 
     void FrameHook::OnLateFrameUpdate(void* a_this) {
