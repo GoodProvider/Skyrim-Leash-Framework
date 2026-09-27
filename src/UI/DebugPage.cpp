@@ -19,6 +19,7 @@
 #include "../Leash/SceneGraph.h"
 #include "DebugOverlay.h"
 #include "MenuLayout.h"
+#include "ModMenu.h"
 
 namespace LeashFramework::UI::DebugPage {
     namespace {
@@ -62,6 +63,18 @@ namespace LeashFramework::UI::DebugPage {
         std::string skeletonDumpActor;
         char skeletonFilter[128]{};
         bool skeletonSkinnedOnly{true};
+        constexpr std::uint32_t kNoPreset = UINT32_MAX;
+        std::uint32_t selectedPreset{kNoPreset};
+        char presetName[64]{};
+        bool confirmPresetDelete{};
+        std::string presetStatus;
+
+        template <std::size_t N>
+        void CopyText(char (&a_destination)[N], std::string_view a_source) {
+            const auto length = std::min(a_source.size(), N - 1);
+            a_source.copy(a_destination, length);
+            a_destination[length] = '\0';
+        }
 
         [[nodiscard]] std::string DescribeActor(RE::Actor* a_actor) {
             if (!a_actor) {
@@ -811,8 +824,160 @@ namespace LeashFramework::UI::DebugPage {
             }
         }
 
+        [[nodiscard]] TestLeashPreset CaptureTestLeashPreset(std::string a_name) {
+            return {.name = std::move(a_name),
+                .holderOwnsLeash = debugSettings.holderOwnsLeash,
+                .standaloneRope = debugSettings.standaloneRope,
+                .anchorType = static_cast<int>(selectedAnchorType),
+                .attachmentBone = selectedAttachmentBone,
+                .attachmentOffset = debugSettings.attachmentOffset,
+                .closedHand = debugSettings.closedHand,
+                .ropeModelPath = debugSettings.ropeModelPath,
+                .leashedAttachmentBone = debugSettings.leashedAttachmentBone,
+                .leashedAttachmentOffset = debugSettings.leashedAttachmentOffset,
+                .parentBone = debugSettings.parentBone,
+                .leashBoneMatch = debugSettings.leashBoneMatch,
+                .minLength = debugSettings.minLength,
+                .maxLength = debugSettings.maxLength,
+                .persistent = debugSettings.persistent};
+        }
+
+        void LoadTestLeashPreset(const TestLeashPreset& a_preset) {
+            const auto previousSource = GetMeshSource();
+            debugSettings.standaloneRope = a_preset.standaloneRope;
+            debugSettings.holderOwnsLeash = a_preset.holderOwnsLeash && !a_preset.standaloneRope;
+            const bool validAnchor = a_preset.anchorType >= 0 && a_preset.anchorType < static_cast<int>(kDebugAnchorLabels.size());
+            selectedAnchorType = debugSettings.holderOwnsLeash ? DebugAnchorType::kActorBone : validAnchor ? static_cast<DebugAnchorType>(a_preset.anchorType) : DebugAnchorType::kRightHand;
+            CopyText(selectedAttachmentBone, a_preset.attachmentBone);
+            debugSettings.attachmentOffset = a_preset.attachmentOffset;
+            debugSettings.closedHand = a_preset.closedHand == 1 || a_preset.closedHand == 2 ? a_preset.closedHand : 0;
+            CopyText(debugSettings.ropeModelPath, a_preset.ropeModelPath);
+            CopyText(debugSettings.leashedAttachmentBone, a_preset.leashedAttachmentBone);
+            debugSettings.leashedAttachmentOffset = a_preset.leashedAttachmentOffset;
+            CopyText(debugSettings.parentBone, a_preset.parentBone);
+            CopyText(debugSettings.leashBoneMatch, a_preset.leashBoneMatch);
+            debugSettings.minLength = a_preset.minLength;
+            debugSettings.maxLength = a_preset.maxLength;
+            debugSettings.persistent = a_preset.persistent;
+
+            applyStatus.clear();
+            if (previousSource != GetMeshSource()) {
+                armorStatus.clear();
+                skeletonStatus.clear();
+                skeletonDump.clear();
+                skeletonDumpActor.clear();
+            }
+            presetStatus = Locale::Format("Loaded preset '{0}'.", a_preset.name);
+            if (selectedAnchorType == DebugAnchorType::kWorldPosition && !debugSettings.holderOwnsLeash && !CapturePlayerWorldAnchor()) {
+                presetStatus = Locale::Format("Loaded preset '{0}', but could not capture the player position and cell.", a_preset.name);
+            }
+        }
+
+        [[nodiscard]] float ButtonWidth(const char* a_label) {
+            ImGuiMCP::ImVec2 size;
+            ImGuiMCP::CalcTextSize(&size, Locale::Text(a_label), nullptr, false, -1.0F);
+            return size.x + ImGuiMCP::GetStyle()->FramePadding.x * 2.0F;
+        }
+
+        void RenderPresets() {
+            auto& presets = debugSettings.testLeashPresets;
+            if (selectedPreset != kNoPreset && selectedPreset >= presets.size()) {
+                selectedPreset = kNoPreset;
+                confirmPresetDelete = false;
+            }
+            const auto* selected = selectedPreset != kNoPreset ? &presets[selectedPreset] : nullptr;
+            const auto spacing = ImGuiMCP::GetStyle()->ItemSpacing.x;
+
+            bool loadRequested{};
+            MenuLayout::Field("Saved presets", [&](const char* a_id) {
+                ImGuiMCP::ImVec2 available;
+                ImGuiMCP::GetContentRegionAvail(&available);
+                const auto buttonsWidth = ButtonWidth("Load") + ButtonWidth("Delete") + spacing * 2.0F;
+                ImGuiMCP::SetNextItemWidth(std::max(available.x - buttonsWidth, ImGuiMCP::GetFontSize() * 8.0F));
+                const char* preview = selected ? selected->name.c_str() : Locale::Text(presets.empty() ? "No saved presets" : "Select preset");
+                bool changed{};
+                if (ImGuiMCP::BeginCombo(a_id, preview)) {
+                    for (std::uint32_t index = 0; index < presets.size(); ++index) {
+                        changed |= MenuLayout::ChoiceItem(presets[index].name.c_str(), index, selectedPreset);
+                    }
+                    ImGuiMCP::EndCombo();
+                }
+                if (changed) {
+                    CopyText(presetName, presets[selectedPreset].name);
+                    confirmPresetDelete = false;
+                    selected = &presets[selectedPreset];
+                }
+                ImGuiMCP::BeginDisabled(!selected);
+                ImGuiMCP::SameLine();
+                loadRequested = MenuLayout::Button("Load");
+                MenuLayout::Help("Replace the test leash settings below with this preset. Selected actors are not changed.");
+                ImGuiMCP::SameLine();
+                if (MenuLayout::Button("Delete")) {
+                    confirmPresetDelete = true;
+                }
+                ImGuiMCP::EndDisabled();
+                return changed;
+            });
+            if (loadRequested && selected) {
+                LoadTestLeashPreset(*selected);
+            }
+
+            if (confirmPresetDelete && selected) {
+                MenuLayout::NoteRaw(Locale::Format("Delete preset '{0}'? This cannot be undone.", selected->name).c_str());
+                if (MenuLayout::Button("Confirm delete")) {
+                    presetStatus = Locale::Format("Deleted preset '{0}'.", selected->name);
+                    presets.erase(presets.begin() + selectedPreset);
+                    selectedPreset = kNoPreset;
+                    selected = nullptr;
+                    confirmPresetDelete = false;
+                    ModMenu::SaveSettings();
+                }
+                ImGuiMCP::SameLine();
+                if (MenuLayout::Button("Cancel")) {
+                    confirmPresetDelete = false;
+                }
+            }
+
+            std::string_view name{presetName};
+            name.remove_prefix(std::min(name.find_first_not_of(" \t"), name.size()));
+            name.remove_suffix(name.size() - std::min(name.find_last_not_of(" \t") + 1, name.size()));
+            const auto existing = std::ranges::find(presets, name, &TestLeashPreset::name);
+            const char* saveLabel = existing != presets.end() ? "Overwrite###SavePreset" : "Save###SavePreset";
+            bool saveRequested{};
+            MenuLayout::Field("Preset name", [&](const char* a_id) {
+                ImGuiMCP::ImVec2 available;
+                ImGuiMCP::GetContentRegionAvail(&available);
+                const auto buttonWidth = std::max(ButtonWidth("Save"), ButtonWidth("Overwrite"));
+                ImGuiMCP::SetNextItemWidth(std::max(available.x - buttonWidth - spacing, ImGuiMCP::GetFontSize() * 8.0F));
+                const bool changed = ImGuiMCP::InputTextWithHint(a_id, Locale::Text("Name this configuration"), presetName, sizeof(presetName));
+                ImGuiMCP::SameLine();
+                ImGuiMCP::BeginDisabled(name.empty());
+                saveRequested = MenuLayout::Button(saveLabel, {buttonWidth, 0.0F});
+                ImGuiMCP::EndDisabled();
+                MenuLayout::Help("Save the current test leash settings under this name. Using an existing name overwrites that preset.");
+                return changed;
+            });
+            if (saveRequested && !name.empty()) {
+                auto preset = CaptureTestLeashPreset(std::string{name});
+                if (existing != presets.end()) {
+                    *existing = std::move(preset);
+                    selectedPreset = static_cast<std::uint32_t>(existing - presets.begin());
+                    presetStatus = Locale::Format("Overwrote preset '{0}'.", name);
+                } else {
+                    presets.push_back(std::move(preset));
+                    selectedPreset = static_cast<std::uint32_t>(presets.size() - 1);
+                    presetStatus = Locale::Format("Saved preset '{0}'.", name);
+                }
+                confirmPresetDelete = false;
+                ModMenu::SaveSettings();
+            }
+            MenuLayout::Note("Presets store the rope, anchor, bone and distance settings. Actors and world coordinates are chosen when loading.");
+            MenuLayout::Feedback(presetStatus);
+        }
+
         void RenderApplyLeash() {
             bool applyRequested{};
+            MenuLayout::Panel("Presets", "Save or load test leash configurations.", RenderPresets);
             MenuLayout::Panel("01 / Actors", "Choose the actors and rope source.", RenderTestActors);
             const auto anchor = [] { MenuLayout::Panel("02 / Anchor", "Choose where the free end of the rope attaches.", RenderAnchorSettings); };
             const auto rope = [] {

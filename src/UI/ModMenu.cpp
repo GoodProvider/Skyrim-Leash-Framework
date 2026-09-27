@@ -66,16 +66,6 @@ namespace LeashFramework::UI::ModMenu {
             SKSE::log::info("Loaded menu settings");
         }
 
-        void SaveSettings() {
-            const auto settings = ReadSettings();
-            settingsJson.clear();
-            if (const auto error = glz::write_file_json(settings, kSettingsPath, settingsJson); error) {
-                SKSE::log::error("Failed to save menu settings: {}", glz::format_error(error, settingsJson));
-                return;
-            }
-            SKSE::log::info("Saved menu settings");
-        }
-
         void __stdcall OnMenuEvent(SKSEMenuFramework::Model::EventType a_eventType) {
             if (a_eventType == SKSEMenuFramework::Model::kOpenMenu) {
                 modMenuOpen = true;
@@ -98,6 +88,16 @@ namespace LeashFramework::UI::ModMenu {
     }  // namespace
 
     bool IsActorCollisionDebugEnabled() { return DebugPage::IsActorCollisionDebugEnabled(); }
+
+    void SaveSettings() {
+        const auto settings = ReadSettings();
+        settingsJson.clear();
+        if (const auto error = glz::write_file_json(settings, kSettingsPath, settingsJson); error) {
+            SKSE::log::error("Failed to save menu settings: {}", glz::format_error(error, settingsJson));
+            return;
+        }
+        SKSE::log::info("Saved menu settings");
+    }
 
     void Register() {
         LoadSettings();
