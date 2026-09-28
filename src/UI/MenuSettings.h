@@ -50,16 +50,16 @@ namespace LeashFramework::UI {
     };
 
     struct DebugSettings {
-        char parentBone[128]{"NPC Spine2 [Spn2]"};
+        char parentBone[128]{"Leash1_0"};
         char leashBoneMatch[128]{"Leash1_1"};
         float minLength{200.0F};
         float maxLength{300.0F};
         RE::NiPoint3 attachmentOffset{};
         bool holderOwnsLeash{};
-        bool standaloneRope{};
-        char ropeModelPath[260]{};
+        bool standaloneRope{true};
+        char ropeModelPath[260]{"Leash/neck_chain.nif"};
         char leashedAttachmentBone[128]{"NPC Neck [Neck]"};
-        RE::NiPoint3 leashedAttachmentOffset{};
+        RE::NiPoint3 leashedAttachmentOffset{0.0F, 7.5F, 0.6F};
         int closedHand{};
         bool persistent{true};
         bool enablePullDiagnostics{};
