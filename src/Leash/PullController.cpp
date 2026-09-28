@@ -401,6 +401,13 @@ namespace LeashFramework {
             }
         }
         a_state = State{.motion = a_keepMotion ? a_state.motion : MotionState{}};
+        if (wasActive && a_actor) {
+            if (auto* eventSource = SKSE::GetModCallbackEventSource()) {
+                const SKSE::ModCallbackEvent event{.eventName = RE::BSFixedString{"LeashFramework_OnActorStopPull"}, .strArg = {}, .numArg = 0.0F, .sender = a_actor};
+                eventSource->SendEvent(std::addressof(event));
+                SKSE::log::info("Sent LeashFramework_OnActorStopPull for {:08X}", a_actor->GetFormID());
+            }
+        }
         return wasActive;
     }
 }  // namespace LeashFramework

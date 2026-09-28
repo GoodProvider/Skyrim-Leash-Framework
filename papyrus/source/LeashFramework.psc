@@ -17,12 +17,47 @@ while starting or loading a game does not send OnUnleash.
 Pull mod events:
 - LeashFramework_OnActorPulled: sent once when normal direct-locomotion pulling starts, including following
   an actor holder before maxLength is reached.
+- LeashFramework_OnActorStopPull: sent once when active normal direct-locomotion pulling ends, after its
+  movement control is released and any player controls owned by that pull are restored. This includes
+  settling, interruption, and leash cleanup. Forced ragdoll recovery may take over afterward.
 - LeashFramework_OnActorRagdollPulled: sent once when forced ragdoll pulling starts.
 
-Register for these events with RegisterForModEvent. Both pull events use the leashed Actor as sender, leave
-strArg empty, and provide the holder/anchor-to-collar distance at the transition in numArg. A pull event can
-be sent again only after that pull mode stops and later starts again; it is not sent every frame while pulling
-remains active.
+Register for these events with RegisterForModEvent. All pull events use the leashed Actor as sender and leave
+strArg empty. The two start events provide the holder/anchor-to-collar distance at the transition in numArg;
+OnActorStopPull uses 0.0. Events are sent only on transitions, not every frame. Releasing an inactive pull
+does not send OnActorStopPull, and no stop event is sent if the leashed Actor can no longer be resolved.
+/;
+
+;/
+Using LeashFramework_OnActorStopPull
+
+Use this event to clear effects or state started by LeashFramework_OnActorPulled. It fires once per active
+normal pull when the framework releases direct locomotion, including early NPC following. Reaching the
+settling distance, an interrupted pull, disconnecting or replacing the leash, teleporting, and save/load
+cleanup can all end an active pull. Repeated cleanup calls do not send duplicate stop events.
+
+The callback receives:
+- eventName: "LeashFramework_OnActorStopPull".
+- strArg: "" (no stop reason is supplied).
+- numArg: 0.0 (no distance is supplied).
+- sender: The leashed Actor, received as a Form; cast it to Actor.
+
+The leash may still be attached after this event, and pulling can start again later. The event marks the
+end of normal pulling; it does not report the end of ragdoll recovery or guarantee that the actor can walk
+immediately, since ragdoll recovery or another movement restriction may apply.
+
+Example in a listening quest or reference script:
+
+Event OnInit()
+    RegisterForModEvent("LeashFramework_OnActorStopPull", "OnLeashActorStopPull")
+EndEvent
+
+Event OnLeashActorStopPull(String eventName, String strArg, Float numArg, Form sender)
+    Actor leashed = sender as Actor
+    If leashed
+        ; Clear your normal-pull effects or state for this actor here.
+    EndIf
+EndEvent
 /;
 
 ;/
