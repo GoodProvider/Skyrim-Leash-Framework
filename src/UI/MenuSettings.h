@@ -47,6 +47,7 @@ namespace LeashFramework::UI {
         float minLength{};
         float maxLength{};
         bool persistent{};
+        int follower{};
     };
 
     struct DebugSettings {
@@ -62,6 +63,7 @@ namespace LeashFramework::UI {
         RE::NiPoint3 leashedAttachmentOffset{0.0F, 7.5F, 0.6F};
         int closedHand{};
         bool persistent{true};
+        int follower{};
         bool enablePullDiagnostics{};
         std::array<ArmorEntry, 5> armorEntries{ArmorEntry{"Leash.esm", "800 #Body Rope"}, ArmorEntry{"Leash.esm", "804 #Neck Rope"}, ArmorEntry{"Leash.esm", "806 #Neck Chain"},
             ArmorEntry{"Leash.esm", "32ce #Magic Rope"}, ArmorEntry{"Leash.esm", "d69 #Leasher-held shield Leash"}};
@@ -80,7 +82,7 @@ namespace LeashFramework::UI {
             using T = DebugSettings;
             static constexpr auto value = glz::object(
                 &T::parentBone, &T::leashBoneMatch, &T::minLength, &T::maxLength, &T::attachmentOffset, &T::holderOwnsLeash, &T::standaloneRope, &T::ropeModelPath,
-                &T::leashedAttachmentBone, &T::leashedAttachmentOffset, &T::closedHand, &T::persistent, &T::enablePullDiagnostics, &T::armorEntries,
+                &T::leashedAttachmentBone, &T::leashedAttachmentOffset, &T::closedHand, &T::persistent, &T::follower, &T::enablePullDiagnostics, &T::armorEntries,
                 &T::testLeashPresets);
         };
     };

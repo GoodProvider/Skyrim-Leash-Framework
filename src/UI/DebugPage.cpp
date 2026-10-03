@@ -43,6 +43,7 @@ namespace LeashFramework::UI::DebugPage {
         constexpr std::array kDebugAnchorLabels{"Right hand", "Left hand", "Actor bone", "World position"};
         constexpr std::array kMeshOwnerLabels{"Leashed actor", "Leasher", "Standalone NIF"};
         constexpr std::array kClosedHandLabels{"None", "Right", "Left"};
+        constexpr std::array kFollowerLabels{"Leashed actor", "Leasher"};
 
         std::vector<ActorOption> actorOptions;
         std::uint32_t selectedHolder{};
@@ -534,15 +535,51 @@ namespace LeashFramework::UI::DebugPage {
                                       : "Maximum follow distance. Must be positive and at least the current minimum.");
         }
 
-        void RenderActiveLeashActor(std::uint32_t a_formID, const char* a_help = nullptr) {
+        constexpr auto kFollowerHelp = "Which actor is pulled along. Choose Leasher to make the holder follow the leashed actor, like walking a dog. Leaning stays on the leashed actor.";
+
+        [[nodiscard]] float GetFollowerComboWidth() {
+            float width{};
+            for (const auto* label : kFollowerLabels) {
+                ImGuiMCP::ImVec2 size;
+                ImGuiMCP::CalcTextSize(&size, Locale::Text(label), nullptr, false, -1.0F);
+                width = std::max(width, size.x);
+            }
+            return width + ImGuiMCP::GetFrameHeight() + ImGuiMCP::GetStyle()->FramePadding.x * 2.0F;
+        }
+
+        // a_index uses LeashSide values
+        bool FollowerCombo(int& a_index) {
+            std::array<const char*, kFollowerLabels.size()> labels;
+            std::ranges::transform(kFollowerLabels, labels.begin(), [](const char* a_label) { return Locale::Text(a_label); });
+            ImGuiMCP::SetNextItemWidth(GetFollowerComboWidth());
+            return ImGuiMCP::Combo("##Follower", &a_index, labels.data(), static_cast<int>(labels.size()));
+        }
+
+        void RenderActiveLeashFollower(RE::Actor* a_leashed, const LeashDefinition& a_definition) {
+            auto index = static_cast<int>(a_definition.follower);
+            ImGuiMCP::BeginDisabled(!a_leashed || a_definition.holderFormID == 0);
+            if (FollowerCombo(index)) {
+                if (LeashManager::GetSingleton().SetFollower(a_leashed, index)) {
+                    const auto follower = static_cast<LeashSide>(index);
+                    status = Locale::Format("{0} now follows {1}.", DescribeActor(a_definition.GetFormID(follower)), DescribeActor(a_definition.GetFormID(Opposite(follower))));
+                } else {
+                    status = Locale::Text("Could not change the follower. World-position leashes always pull the leashed actor.");
+                }
+            }
+            ImGuiMCP::EndDisabled();
+            MenuLayout::Help(kFollowerHelp);
+        }
+
+        // a_details is already localized
+        void RenderActiveLeashActor(std::uint32_t a_formID, const std::string& a_details = {}) {
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_formID);
             const auto* name = actor ? actor->GetDisplayFullName() : Locale::Text("Unavailable");
             ImGuiMCP::AlignTextToFramePadding();
             ImGuiMCP::TextUnformatted(name && name[0] != '\0' ? name : Locale::Text("Unnamed actor"));
             if (ImGuiMCP::IsItemHovered() && ImGuiMCP::BeginTooltip()) {
                 ImGuiMCP::TextUnformatted(DescribeActor(a_formID).c_str());
-                if (a_help) {
-                    ImGuiMCP::TextUnformatted(Locale::Text(a_help));
+                if (!a_details.empty()) {
+                    ImGuiMCP::TextUnformatted(a_details.c_str());
                 }
                 ImGuiMCP::EndTooltip();
             }
@@ -566,6 +603,7 @@ namespace LeashFramework::UI::DebugPage {
             };
             const auto minimumWidth = std::max(inputWidth, textWidth("Min distance"));
             const auto maximumWidth = std::max(inputWidth, textWidth("Max distance"));
+            const auto followerWidth = std::max(GetFollowerComboWidth(), textWidth("Follower"));
             const auto disconnectWidth = ImGuiMCP::GetFrameHeight();
             constexpr auto tableFlags = ImGuiMCP::ImGuiTableFlags_BordersInnerH | ImGuiMCP::ImGuiTableFlags_RowBg | ImGuiMCP::ImGuiTableFlags_SizingStretchProp;
             if (!ImGuiMCP::BeginTable("ActiveLeashes", 6, tableFlags)) {
@@ -573,7 +611,7 @@ namespace LeashFramework::UI::DebugPage {
             }
             ImGuiMCP::TableSetupColumn(Locale::Text("Leashed actor"), ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.0F);
             ImGuiMCP::TableSetupColumn(Locale::Text("Leasher"), ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.0F);
-            ImGuiMCP::TableSetupColumn(Locale::Text("Physical owner"), ImGuiMCP::ImGuiTableColumnFlags_WidthStretch, 1.0F);
+            ImGuiMCP::TableSetupColumn(Locale::Text("Follower"), ImGuiMCP::ImGuiTableColumnFlags_WidthFixed, followerWidth);
             ImGuiMCP::TableSetupColumn(Locale::Text("Min distance"), ImGuiMCP::ImGuiTableColumnFlags_WidthFixed, minimumWidth);
             ImGuiMCP::TableSetupColumn(Locale::Text("Max distance"), ImGuiMCP::ImGuiTableColumnFlags_WidthFixed, maximumWidth);
             ImGuiMCP::TableSetupColumn("", ImGuiMCP::ImGuiTableColumnFlags_WidthFixed, disconnectWidth);
@@ -584,7 +622,9 @@ namespace LeashFramework::UI::DebugPage {
                 auto* leashed = RE::TESForm::LookupByID<RE::Actor>(definition.leashedFormID);
                 ImGuiMCP::TableNextRow();
                 ImGuiMCP::TableSetColumnIndex(0);
-                RenderActiveLeashActor(definition.leashedFormID, definition.persistent ? "Persistent leash / included in saves" : "Temporary leash / current session only");
+                const auto ropeOwner = std::holds_alternative<StandaloneMesh>(definition.mesh) ? std::string{Locale::Text("Standalone NIF")} : DescribeActor(definition.GetFormID(definition.GetMeshSide()));
+                RenderActiveLeashActor(definition.leashedFormID, std::format("{}\n{}: {}",
+                    Locale::Text(definition.persistent ? "Persistent leash / included in saves" : "Temporary leash / current session only"), Locale::Text("Physical owner"), ropeOwner));
                 ImGuiMCP::TableSetColumnIndex(1);
                 if (definition.holderFormID != 0) {
                     RenderActiveLeashActor(definition.holderFormID);
@@ -594,13 +634,7 @@ namespace LeashFramework::UI::DebugPage {
                     MenuLayout::Help("World position");
                 }
                 ImGuiMCP::TableSetColumnIndex(2);
-                if (std::holds_alternative<StandaloneMesh>(definition.mesh)) {
-                    ImGuiMCP::AlignTextToFramePadding();
-                    ImGuiMCP::TextUnformatted(Locale::Text("Standalone NIF"));
-                    MenuLayout::Help("Standalone NIF");
-                } else {
-                    RenderActiveLeashActor(definition.HolderOwnsMesh() ? definition.holderFormID : definition.leashedFormID);
-                }
+                RenderActiveLeashFollower(leashed, definition);
                 ImGuiMCP::TableSetColumnIndex(3);
                 RenderActiveLeashLength(leashed, definition.minLength, true, inputWidth);
                 ImGuiMCP::TableSetColumnIndex(4);
@@ -780,7 +814,8 @@ namespace LeashFramework::UI::DebugPage {
                 .leashBoneMatch = debugSettings.leashBoneMatch,
                 .minLength = debugSettings.minLength,
                 .maxLength = debugSettings.maxLength,
-                .persistent = debugSettings.persistent});
+                .persistent = debugSettings.persistent,
+                .follower = worldAnchor ? LeashSide::kLeashed : static_cast<LeashSide>(debugSettings.follower)});
             if (debugSettings.standaloneRope) {
                 status = Locale::Text(applied ? "Standalone leash created. No rope equipment is needed; inspect its bones in Skeleton." :
                     "Could not create standalone rope. Requires loaded actors/cell, valid bone names and a self-contained NIF. Check the plugin log.");
@@ -832,7 +867,8 @@ namespace LeashFramework::UI::DebugPage {
                 .leashBoneMatch = debugSettings.leashBoneMatch,
                 .minLength = debugSettings.minLength,
                 .maxLength = debugSettings.maxLength,
-                .persistent = debugSettings.persistent};
+                .persistent = debugSettings.persistent,
+                .follower = debugSettings.follower};
         }
 
         void LoadTestLeashPreset(const TestLeashPreset& a_preset) {
@@ -852,6 +888,7 @@ namespace LeashFramework::UI::DebugPage {
             debugSettings.minLength = a_preset.minLength;
             debugSettings.maxLength = a_preset.maxLength;
             debugSettings.persistent = a_preset.persistent;
+            debugSettings.follower = a_preset.follower == static_cast<int>(LeashSide::kHolder) ? a_preset.follower : static_cast<int>(LeashSide::kLeashed);
 
             if (previousSource != GetMeshSource()) {
                 skeletonDump.clear();
@@ -964,6 +1001,29 @@ namespace LeashFramework::UI::DebugPage {
             MenuLayout::Note("Presets store the rope, anchor, bone and distance settings. Actors and world coordinates are chosen when loading.");
         }
 
+        void RenderTestLeashFollower() {
+            const auto worldAnchor = !debugSettings.holderOwnsLeash && selectedAnchorType == DebugAnchorType::kWorldPosition;
+            auto index = worldAnchor ? static_cast<int>(LeashSide::kLeashed) : debugSettings.follower;
+            // Push the label and dropdown against the panels right edge
+            ImGuiMCP::ImVec2 label;
+            ImGuiMCP::CalcTextSize(&label, Locale::Text("Follower"), nullptr, false, -1.0F);
+            const auto width = label.x + ImGuiMCP::GetStyle()->ItemSpacing.x + GetFollowerComboWidth();
+            ImGuiMCP::ImVec2 available;
+            ImGuiMCP::GetContentRegionAvail(&available);
+            if (available.x > width) {
+                ImGuiMCP::SetCursorPosX(ImGuiMCP::GetCursorPosX() + available.x - width);
+            }
+            ImGuiMCP::BeginDisabled(worldAnchor);
+            ImGuiMCP::AlignTextToFramePadding();
+            ImGuiMCP::TextUnformatted(Locale::Text("Follower"));
+            ImGuiMCP::SameLine();
+            if (FollowerCombo(index)) {
+                debugSettings.follower = index;
+            }
+            ImGuiMCP::EndDisabled();
+            MenuLayout::Help(kFollowerHelp);
+        }
+
         void RenderApplyLeash() {
             bool applyRequested{};
             MenuLayout::Panel("Presets", "Save or load test leash configurations.", RenderPresets);
@@ -979,6 +1039,8 @@ namespace LeashFramework::UI::DebugPage {
             const auto apply = [&] {
                 MenuLayout::Panel("04 / Apply test leash", debugSettings.standaloneRope ? "Spawn the configured NIF without equipping armor." : "Equip a rope in Equipment; check its bones in Skeleton.", [&] {
                     MenuLayout::Toggle("Keep leash in saves", debugSettings.persistent, "Save this leash with the game. Temporary test leashes are discarded when loading.");
+                    ImGuiMCP::SameLine();
+                    RenderTestLeashFollower();
                     applyRequested = MenuLayout::Button("Apply test leash", {-1.0F, 0.0F});
                 });
             };

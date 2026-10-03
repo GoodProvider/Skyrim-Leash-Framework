@@ -109,8 +109,8 @@ namespace LeashFramework::Recovery {
             return snapshot;
         }
 
-        [[nodiscard]] bool PullRagdoll(RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_holderAnchor, float a_maxLength, float a_deltaTime) {
-            auto direction = a_holderAnchor - a_collarAnchor;
+        [[nodiscard]] bool PullRagdoll(RE::Actor& a_actor, const RE::NiPoint3& a_attachment, const RE::NiPoint3& a_anchor, float a_maxLength, float a_deltaTime) {
+            auto direction = a_anchor - a_attachment;
             const auto distance = direction.Unitize();
 
             auto snapshot = CaptureRagdoll(a_actor);
@@ -148,8 +148,8 @@ namespace LeashFramework::Recovery {
                 if (distance <= a_maxLength || distance <= 0.001F) {
                     continue;
                 }
-                const auto speedTowardHolder = body->motion.linearVelocity.Dot3(havokDirection);
-                const auto velocityChange = std::clamp(desiredSpeed - speedTowardHolder, 0.0F, maximumVelocityChange);
+                const auto speedTowardAnchor = body->motion.linearVelocity.Dot3(havokDirection);
+                const auto velocityChange = std::clamp(desiredSpeed - speedTowardAnchor, 0.0F, maximumVelocityChange);
                 if (velocityChange <= 0.0F) {
                     continue;
                 }
@@ -167,11 +167,12 @@ namespace LeashFramework::Recovery {
             return true;
         }
 
-        void SendPullEvent(RE::Actor& a_actor, float a_distance, bool& a_sent) {
+        void SendPullEvent(RE::Actor& a_actor, LeashSide a_followerSide, float a_distance, bool& a_sent) {
             if (!a_sent) {
                 a_sent = true;
                 if (auto* eventSource = SKSE::GetModCallbackEventSource()) {
-                    const SKSE::ModCallbackEvent event{.eventName = RE::BSFixedString{"LeashFramework_OnActorRagdollPulled"}, .strArg = {}, .numArg = a_distance, .sender = std::addressof(a_actor)};
+                    const SKSE::ModCallbackEvent event{.eventName = RE::BSFixedString{"LeashFramework_OnActorRagdollPulled"}, .strArg = RE::BSFixedString{GetSideName(a_followerSide)}, .numArg = a_distance,
+                        .sender = std::addressof(a_actor)};
                     eventSource->SendEvent(std::addressof(event));
                     SKSE::log::info("Sent LeashFramework_OnActorRagdollPulled for {:08X} at distance {:.1f}", a_actor.GetFormID(), a_distance);
                 }
@@ -184,21 +185,24 @@ namespace LeashFramework::Recovery {
         _settings = a_settings;
     }
 
-    bool ForcedRecoveryController::Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, const RE::NiPoint3& a_source, float a_maxLength, float a_deltaTime,
-        bool a_enabled) {
+    bool ForcedRecoveryController::Update(State& a_state, LeashSide a_followerSide, const Roles<EndSample>& a_roles, float a_maxLength, float a_deltaTime, bool a_enabled) {
         LF_PROFILE_SCOPE("Controller/ForcedRecovery");
-        const auto distance = a_collarAnchor.GetDistance(a_anchor);
-        const auto formID = a_actor.GetFormID();
-        const auto actorRestricted = ActorRestrictions::IsRagdollOrTeleportBlocked(a_actor);
+        auto& actor = *a_roles.follower.actor;
+        const auto& attachment = a_roles.follower.attachment;
+        const auto& anchor = a_roles.leader.attachment;
+        const auto source = a_roles.leader.GetRoot();
+        const auto distance = attachment.GetDistance(anchor);
+        const auto formID = actor.GetFormID();
+        const auto actorRestricted = ActorRestrictions::IsRagdollOrTeleportBlocked(actor);
         const auto triggerDistance = a_maxLength * _settings.distanceMultiplier;
-        const auto* process = a_actor.GetActorRuntimeData().currentProcess;
-        if (!std::isfinite(distance) || a_actor.IsDisabled() || !a_actor.Is3DLoaded()) {
+        const auto* process = actor.GetActorRuntimeData().currentProcess;
+        if (!std::isfinite(distance) || actor.IsDisabled() || !actor.Is3DLoaded()) {
             Release(a_state);
             return false;
         }
 
-        if (a_actor.IsDead(true)) {
-            if (a_actor.IsPlayerRef() || !a_enabled || actorRestricted || a_actor.IsInKillMove()) {
+        if (actor.IsDead(true)) {
+            if (actor.IsPlayerRef() || !a_enabled || actorRestricted || actor.IsInKillMove()) {
                 Release(a_state);
                 return false;
             }
@@ -213,11 +217,11 @@ namespace LeashFramework::Recovery {
                 a_state.pullEventSent = eventSent;
                 return true;
             }
-            if (!PullRagdoll(a_actor, a_collarAnchor, a_anchor, a_maxLength, a_deltaTime)) {
+            if (!PullRagdoll(actor, attachment, anchor, a_maxLength, a_deltaTime)) {
                 Release(a_state);
                 return false;
             }
-            SendPullEvent(a_actor, distance, a_state.pullEventSent);
+            SendPullEvent(actor, a_followerSide, distance, a_state.pullEventSent);
             if (distance <= a_maxLength) {
                 a_state.insideDistanceTime += a_deltaTime;
                 if (a_state.insideDistanceTime >= kInsideDistanceDelay) {
@@ -238,7 +242,7 @@ namespace LeashFramework::Recovery {
         }
 
         if (a_state.mode == Mode::kInactive) {
-            if (!RagdollHold::IsAvailable() || !a_enabled || distance <= triggerDistance || !CanRequestRagdoll(a_actor)) {
+            if (!RagdollHold::IsAvailable() || !a_enabled || distance <= triggerDistance || !CanRequestRagdoll(actor)) {
                 return false;
             }
             // Give the leash tick a frame to release direct locomotion before requesting a knockdown
@@ -249,12 +253,12 @@ namespace LeashFramework::Recovery {
 
         if (a_state.mode == Mode::kRecovering) {
             if (a_state.pullEventSent && !a_state.interruptingGetUp && a_enabled && distance > a_maxLength &&
-                a_actor.AsActorState()->GetKnockState() == RE::KNOCK_STATE_ENUM::kGetUp && CanRequestRagdoll(a_actor, true)) {
+                actor.AsActorState()->GetKnockState() == RE::KNOCK_STATE_ENUM::kGetUp && CanRequestRagdoll(actor, true)) {
                 // This continues our existing pull episode; a failed interruption must not restart itself every recovery tick...
                 a_state = State{.mode = Mode::kRequestingRagdoll, .pullEventSent = true, .interruptingGetUp = true};
                 SKSE::log::info("Interrupting forced-recovery get-up for {:08X} at distance {:.1f}", formID, distance);
             } else {
-                if (UpdateRecovery(a_state, a_actor, a_deltaTime)) {
+                if (UpdateRecovery(a_state, actor, a_deltaTime)) {
                     BeginCooldown(a_state);
                     return false;
                 }
@@ -270,8 +274,8 @@ namespace LeashFramework::Recovery {
             return false;
         }
 
-        if (!a_enabled || actorRestricted || a_actor.IsInKillMove() || a_actor.AsActorState()->GetLifeState() != RE::ACTOR_LIFE_STATE::kAlive ||
-            a_actor.GetActorRuntimeData().boolBits.any(RE::Actor::BOOL_BITS::kParalyzed)) {
+        if (!a_enabled || actorRestricted || actor.IsInKillMove() || actor.AsActorState()->GetLifeState() != RE::ACTOR_LIFE_STATE::kAlive ||
+            actor.GetActorRuntimeData().boolBits.any(RE::Actor::BOOL_BITS::kParalyzed)) {
             if (!a_state.requestIssued) {
                 Release(a_state);
                 return false;
@@ -280,7 +284,7 @@ namespace LeashFramework::Recovery {
             return true;
         }
 
-        const auto knockState = a_actor.AsActorState()->GetKnockState();
+        const auto knockState = actor.AsActorState()->GetKnockState();
         if (a_state.mode == Mode::kRequestingRagdoll) {
             const auto waitingForGetUpInterrupt = a_state.interruptingGetUp && knockState == RE::KNOCK_STATE_ENUM::kGetUp;
             a_state.modeElapsed += a_deltaTime;
@@ -288,11 +292,11 @@ namespace LeashFramework::Recovery {
             if (a_state.requestIssued) {
                 if (knockState == RE::KNOCK_STATE_ENUM::kExplodeLeadIn || knockState == RE::KNOCK_STATE_ENUM::kExplode) {
                     a_state.knockdownObserved = true;
-                } else if (a_state.knockdownObserved || (knockState != RE::KNOCK_STATE_ENUM::kNormal && !waitingForGetUpInterrupt) || a_actor.IsInRagdollState()) {
+                } else if (a_state.knockdownObserved || (knockState != RE::KNOCK_STATE_ENUM::kNormal && !waitingForGetUpInterrupt) || actor.IsInRagdollState()) {
                     BeginRecovery(a_state);
                     return true;
                 }
-            } else if (!CanRequestRagdoll(a_actor, a_state.interruptingGetUp)) {
+            } else if (!CanRequestRagdoll(actor, a_state.interruptingGetUp)) {
                 BeginCooldown(a_state);
                 return false;
             }
@@ -313,16 +317,16 @@ namespace LeashFramework::Recovery {
             }
 
             if (knockState != RE::KNOCK_STATE_ENUM::kExplode) {
-                if ((knockState == RE::KNOCK_STATE_ENUM::kNormal || waitingForGetUpInterrupt) && a_state.actionRetryDelay <= 0.0F && CanRequestRagdoll(a_actor, a_state.interruptingGetUp)) {
+                if ((knockState == RE::KNOCK_STATE_ENUM::kNormal || waitingForGetUpInterrupt) && a_state.actionRetryDelay <= 0.0F && CanRequestRagdoll(actor, a_state.interruptingGetUp)) {
                     if (!a_state.ragdollHold) {
-                        a_state.ragdollHold = RagdollHold::Acquire(a_actor);
+                        a_state.ragdollHold = RagdollHold::Acquire(actor);
                     }
                     if (!a_state.ragdollHold) {
                         BeginCooldown(a_state);
                         return false;
                     }
                     // Publish the hold before the request: the engine may enter and update ragdoll before our next tick.
-                    if (RequestRagdoll(a_actor, a_source)) {
+                    if (RequestRagdoll(actor, source)) {
                         a_state.requestIssued = true;
                     }
                     a_state.actionRetryDelay = kRagdollRetryInterval;
@@ -334,7 +338,7 @@ namespace LeashFramework::Recovery {
             return true;
         }
 
-        if (!PullRagdoll(a_actor, a_collarAnchor, a_anchor, a_maxLength, a_deltaTime)) {
+        if (!PullRagdoll(actor, attachment, anchor, a_maxLength, a_deltaTime)) {
             if (a_state.mode == Mode::kPulling) {
                 SKSE::log::warn("Forced recovery lost its dynamic ragdoll for {:08X}", formID);
                 BeginRecovery(a_state);
@@ -346,7 +350,7 @@ namespace LeashFramework::Recovery {
             a_state.mode = Mode::kPulling;
             a_state.modeElapsed = 0.0F;
             a_state.interruptingGetUp = false;
-            SendPullEvent(a_actor, distance, a_state.pullEventSent);
+            SendPullEvent(actor, a_followerSide, distance, a_state.pullEventSent);
         }
 
         if (distance <= a_maxLength) {

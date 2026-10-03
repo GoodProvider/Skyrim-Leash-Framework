@@ -132,17 +132,23 @@ namespace LeashFramework {
         _settings = a_settings;
     }
 
-    void PullController::Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, float a_ropeLength, const RE::NiPoint3& a_goal, RE::TESObjectCELL* a_goalCell, bool a_hasHolder, float a_minLength, float a_maxLength, float a_deltaTime) {
+    void PullController::Update(State& a_state, LeashSide a_followerSide, const Roles<EndSample>& a_roles, float a_ropeLength, float a_minLength, float a_maxLength, float a_deltaTime) {
         LF_PROFILE_SCOPE("Controller/Pull");
+        auto& actor = *a_roles.follower.actor;
+        const auto& attachment = a_roles.follower.attachment;
+        const auto& anchor = a_roles.leader.attachment;
+        const auto goal = a_roles.leader.GetRoot();
+        auto* goalCell = a_roles.leader.cell;
+        const auto hasLeader = a_roles.leader.actor != nullptr;
         if (!std::isfinite(a_deltaTime) || a_deltaTime <= 0.0F) {
             Movement::ClearLeashMovementConstraint(a_state.nativeMovementBinding);
             return;
         }
         const auto deltaTime = std::min(a_deltaTime, kMaximumSampleTime);
         auto& motion = a_state.motion;
-        auto goalDelta = a_goal - motion.previousGoal;
+        auto goalDelta = goal - motion.previousGoal;
         goalDelta.z = 0.0F;
-        if (a_hasHolder && motion.hasSample && a_deltaTime <= kMaximumSampleTime &&
+        if (hasLeader && motion.hasSample && a_deltaTime <= kMaximumSampleTime &&
             goalDelta.SqrLength() <= kMaximumSampleDisplacement * kMaximumSampleDisplacement) {
             auto velocity = goalDelta / a_deltaTime;
             const auto speed = velocity.Length();
@@ -161,134 +167,136 @@ namespace LeashFramework {
         } else {
             motion = {};
         }
-        motion.previousGoal = a_goal;
+        motion.previousGoal = goal;
         motion.hasSample = true;
         motion.movingBlend = std::lerp(motion.movingBlend, motion.moving ? 1.0F : 0.0F, 1.0F - std::exp(-kMovingGapResponseRate * deltaTime));
         a_state.retryDelay = std::max(a_state.retryDelay - deltaTime, 0.0F);
-        const auto distance = std::sqrt(HorizontalDistanceSquared(a_collarAnchor, a_goal));
-        auto goalDirection = a_goal - a_collarAnchor;
+        const auto distance = std::sqrt(HorizontalDistanceSquared(attachment, goal));
+        auto goalDirection = goal - attachment;
         goalDirection.z = 0.0F;
         (void)goalDirection.Unitize();
-        const auto isPlayer = RE::PlayerCharacter::GetSingleton() == std::addressof(a_actor);
-        const auto followsHolder = a_hasHolder && !isPlayer;
-        const auto arrivalDistance = a_minLength + (followsHolder ? std::min({kArrivalTolerance, a_maxLength * 0.1F, a_maxLength - a_minLength}) : 0.0F);
+        const auto isPlayer = RE::PlayerCharacter::GetSingleton() == std::addressof(actor);
+        const auto followsLeader = hasLeader && !isPlayer;
+        const auto arrivalDistance = a_minLength + (followsLeader ? std::min({kArrivalTolerance, a_maxLength * 0.1F, a_maxLength - a_minLength}) : 0.0F);
         const auto targetDistance = a_minLength + (a_maxLength - a_minLength) * _settings.movingFollowGap * motion.movingBlend;
         const auto predictedDistance = distance + std::max(motion.velocity.Dot(goalDirection), 0.0F) * kStartPredictionTime;
-        const auto formID = a_actor.GetFormID();
-        const auto canUseNativeMovement = followsHolder && Movement::CanConstrainNativeMovement(a_actor);
+        const auto formID = actor.GetFormID();
+        const auto canUseNativeMovement = followsLeader && Movement::CanConstrainNativeMovement(actor);
         const auto allowNativeMovement = [&] {
-            if (canUseNativeMovement && !motion.moving && CanPull(a_actor)) {
-                Movement::UpdateLeashMovementConstraint(a_state.nativeMovementBinding, a_actor, a_collarAnchor, a_anchor, a_goal, a_ropeLength, a_maxLength);
+            if (canUseNativeMovement && !motion.moving && CanPull(actor)) {
+                Movement::UpdateLeashMovementConstraint(a_state.nativeMovementBinding, actor, attachment, anchor, goal, a_ropeLength, a_maxLength);
                 if (a_state.nativeMovementBinding) {
-                    LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kNativeMovement, "native movement within leash reach", a_actor, distance, a_minLength, a_maxLength);
+                    LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kNativeMovement, "native movement within leash reach", actor, distance, a_minLength, a_maxLength);
                 }
             } else {
                 Movement::ClearLeashMovementConstraint(a_state.nativeMovementBinding);
             }
         };
         if (!a_state.active) {
-            const auto physicalSeparation = distance > arrivalDistance + kRestartTolerance && a_collarAnchor.GetDistance(a_anchor) > a_ropeLength + kRestartTolerance;
+            const auto physicalSeparation = distance > arrivalDistance + kRestartTolerance && attachment.GetDistance(anchor) > a_ropeLength + kRestartTolerance;
             const auto stationaryNeedsPull = canUseNativeMovement ? distance > a_maxLength || physicalSeparation : distance > arrivalDistance + kRestartTolerance;
-            const auto shouldFollow = followsHolder ? (motion.moving ? predictedDistance > targetDistance + kRestartTolerance : stationaryNeedsPull) : distance > a_maxLength;
+            const auto shouldFollow = followsLeader ? (motion.moving ? predictedDistance > targetDistance + kRestartTolerance : stationaryNeedsPull) : distance > a_maxLength;
             if (!shouldFollow || a_state.retryDelay > 0.0F) {
                 allowNativeMovement();
                 return;
             }
             Movement::ClearLeashMovementConstraint(a_state.nativeMovementBinding);
 
-            if (!CanPull(a_actor)) {
-                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kCanPullBlocked, "blocked by CanPull", a_actor, distance, a_minLength, a_maxLength);
+            if (!CanPull(actor)) {
+                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kCanPullBlocked, "blocked by CanPull", actor, distance, a_minLength, a_maxLength);
                 return;
             }
-            if (a_actor.IsAllowRotation()) {
-                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kTurnHandoffBlocked, "waiting for animation-driven turn", a_actor, distance, a_minLength, a_maxLength);
+            if (actor.IsAllowRotation()) {
+                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kTurnHandoffBlocked, "waiting for animation-driven turn", actor, distance, a_minLength, a_maxLength);
                 return;
             }
-            if (Movement::IsDirectLocomotionActive(a_actor)) {
-                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kDirectActiveBlocked, "blocked by existing direct locomotion", a_actor, distance, a_minLength, a_maxLength);
+            if (Movement::IsDirectLocomotionActive(actor)) {
+                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kDirectActiveBlocked, "blocked by existing direct locomotion", actor, distance, a_minLength, a_maxLength);
                 return;
             }
 
             bool restorePlayerControls{};
-            if (auto* player = RE::PlayerCharacter::GetSingleton(); player == std::addressof(a_actor)) {
-                if (!a_actor.GetPlayerControls()) {
-                    LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kControlsBlocked, "blocked by player controls", a_actor, distance, a_minLength, a_maxLength);
+            if (auto* player = RE::PlayerCharacter::GetSingleton(); player == std::addressof(actor)) {
+                if (!actor.GetPlayerControls()) {
+                    LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kControlsBlocked, "blocked by player controls", actor, distance, a_minLength, a_maxLength);
                     return;
                 }
-                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kAttemptingStart, "attempting direct locomotion", a_actor, distance, a_minLength, a_maxLength);
+                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kAttemptingStart, "attempting direct locomotion", actor, distance, a_minLength, a_maxLength);
                 player->SetAIDriven(true);
                 restorePlayerControls = true;
             } else {
-                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kAttemptingStart, "attempting direct locomotion", a_actor, distance, a_minLength, a_maxLength);
+                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kAttemptingStart, "attempting direct locomotion", actor, distance, a_minLength, a_maxLength);
             }
-            if (!Movement::StartDirectLocomotion(a_actor, _diagnosticsEnabled)) {
+            if (!Movement::StartDirectLocomotion(actor, _diagnosticsEnabled)) {
                 if (restorePlayerControls) {
                     RE::PlayerCharacter::GetSingleton()->SetAIDriven(false);
                 }
-                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStartFailed, "direct locomotion start failed", a_actor, distance, a_minLength, a_maxLength);
+                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStartFailed, "direct locomotion start failed", actor, distance, a_minLength, a_maxLength);
                 a_state.retryDelay = kRetryDelay;
                 return;
             }
 
             a_state.active = true;
+            a_state.follower = a_followerSide;
             a_state.restorePlayerControls = restorePlayerControls;
-            LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStarted, "direct locomotion started", a_actor, distance, a_minLength, a_maxLength);
+            LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStarted, "direct locomotion started", actor, distance, a_minLength, a_maxLength);
             if (auto* eventSource = SKSE::GetModCallbackEventSource()) {
-                const SKSE::ModCallbackEvent event{.eventName = RE::BSFixedString{"LeashFramework_OnActorPulled"}, .strArg = {}, .numArg = distance, .sender = std::addressof(a_actor)};
+                const SKSE::ModCallbackEvent event{
+                    .eventName = RE::BSFixedString{"LeashFramework_OnActorPulled"}, .strArg = RE::BSFixedString{GetSideName(a_followerSide)}, .numArg = distance, .sender = std::addressof(actor)};
                 eventSource->SendEvent(std::addressof(event));
                 SKSE::log::info("Sent LeashFramework_OnActorPulled for {:08X} at distance {:.1f}", formID, distance);
             }
         }
 
-        if (!CanPull(a_actor) || !Movement::IsDirectLocomotionActive(a_actor)) {
-            LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStateInvalidated, "pull state invalidated", a_actor, distance, a_minLength, a_maxLength);
-            Release(a_state, std::addressof(a_actor));
+        if (!CanPull(actor) || !Movement::IsDirectLocomotionActive(actor)) {
+            LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStateInvalidated, "pull state invalidated", actor, distance, a_minLength, a_maxLength);
+            Release(a_state, std::addressof(actor));
             return;
         }
         Movement::ClearLeashMovementConstraint(a_state.nativeMovementBinding);
         if ((isPlayer || !motion.moving) && distance <= arrivalDistance) {
-            LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kSettled, "settled near minimum length", a_actor, distance, a_minLength, a_maxLength);
-            Release(a_state, std::addressof(a_actor), true);
+            LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kSettled, "settled near minimum length", actor, distance, a_minLength, a_maxLength);
+            Release(a_state, std::addressof(actor), true);
             allowNativeMovement();
             return;
         }
 
         if (a_state.stableDirectFrames < kStableDirectFrames) {
             a_state.commandedSpeed = 0.0F;
-            if (!Movement::IsDirectLocomotionDriving(a_actor)) {
+            if (!Movement::IsDirectLocomotionDriving(actor)) {
                 a_state.stableDirectFrames = 0;
-                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStabilizing, "waiting for temporary movement handoff", a_actor, distance, a_minLength, a_maxLength);
+                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStabilizing, "waiting for temporary movement handoff", actor, distance, a_minLength, a_maxLength);
                 return;
             }
-            (void)Movement::DriveDirectLocomotion(a_actor, a_actor.GetPosition(), 0.0F);
-            if (a_actor.IsAnimationDriven() || a_actor.IsAllowRotation()) {
+            (void)Movement::DriveDirectLocomotion(actor, actor.GetPosition(), 0.0F);
+            if (actor.IsAnimationDriven() || actor.IsAllowRotation()) {
                 a_state.stableDirectFrames = 0;
-                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStabilizing, "waiting for direct locomotion to stabilize", a_actor, distance, a_minLength, a_maxLength);
+                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStabilizing, "waiting for direct locomotion to stabilize", actor, distance, a_minLength, a_maxLength);
                 return;
             }
             ++a_state.stableDirectFrames;
             if (a_state.stableDirectFrames < kStableDirectFrames) {
-                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStabilizing, "stabilizing direct locomotion", a_actor, distance, a_minLength, a_maxLength);
+                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStabilizing, "stabilizing direct locomotion", actor, distance, a_minLength, a_maxLength);
                 return;
             }
         }
 
         a_state.replanDelay -= deltaTime;
-        const auto goalMoved = HorizontalDistanceSquared(a_goal, a_state.lastGoal) >= kGoalMoveThreshold * kGoalMoveThreshold;
-        const auto* characterController = a_actor.GetCharController();
+        const auto goalMoved = HorizontalDistanceSquared(goal, a_state.lastGoal) >= kGoalMoveThreshold * kGoalMoveThreshold;
+        const auto* characterController = actor.GetCharController();
         const auto controllerRadius = characterController ? characterController->radius * RE::bhkWorld::GetWorldScaleInverse() : kDefaultPathingRadius;
         const auto actorRadius = std::isfinite(controllerRadius) && controllerRadius > 0.0F ? controllerRadius : kDefaultPathingRadius;
         if (a_state.replanDelay <= 0.0F || goalMoved) {
             static const Pathing::NavMeshPathfinder pathfinder;
-            a_state.path = pathfinder.FindPath(a_actor.GetPosition(), a_actor.GetParentCell(), a_goal, a_goalCell, actorRadius);
+            a_state.path = pathfinder.FindPath(actor.GetPosition(), actor.GetParentCell(), goal, goalCell, actorRadius);
             a_state.waypointIndex = 0;
-            a_state.lastGoal = a_goal;
+            a_state.lastGoal = goal;
             a_state.replanDelay = kReplanInterval;
         }
 
         while (a_state.waypointIndex < a_state.path.size()) {
             const auto waypointRadius = a_state.waypointIndex + 1 < a_state.path.size() ? actorRadius : kFinalWaypointRadius;
-            if (HorizontalDistanceSquared(a_actor.GetPosition(), a_state.path[a_state.waypointIndex]) > waypointRadius * waypointRadius) {
+            if (HorizontalDistanceSquared(actor.GetPosition(), a_state.path[a_state.waypointIndex]) > waypointRadius * waypointRadius) {
                 break;
             }
             ++a_state.waypointIndex;
@@ -297,9 +305,9 @@ namespace LeashFramework {
         if (a_state.waypointIndex >= a_state.path.size()) {
             a_state.commandedSpeed = 0.0F;
             a_state.idleTime += deltaTime;
-            if (!Movement::DriveDirectLocomotion(a_actor, a_actor.GetPosition(), 0.0F) || a_state.idleTime >= kIdleReleaseTime) {
-                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kWaitingForPath, "waiting for a usable path", a_actor, distance, a_minLength, a_maxLength);
-                Release(a_state, std::addressof(a_actor), true);
+            if (!Movement::DriveDirectLocomotion(actor, actor.GetPosition(), 0.0F) || a_state.idleTime >= kIdleReleaseTime) {
+                LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kWaitingForPath, "waiting for a usable path", actor, distance, a_minLength, a_maxLength);
+                Release(a_state, std::addressof(actor), true);
                 a_state.retryDelay = kRetryDelay;
                 allowNativeMovement();
             }
@@ -308,26 +316,26 @@ namespace LeashFramework {
 
         const auto tensionRange = std::max(a_maxLength - a_minLength, 1.0F);
         const auto tension = std::clamp((distance - a_minLength) / tensionRange, 0.0F, 1.0F);
-        const auto actorPosition = a_actor.GetPosition();
+        const auto actorPosition = actor.GetPosition();
         auto previousPoint = actorPosition;
         float pathDistance{};
         for (auto index = a_state.waypointIndex; index < a_state.path.size(); ++index) {
             // Track the live goal for speed control so its movement does not arrive in replan-sized jumps.
-            const auto& point = index + 1 == a_state.path.size() ? a_goal : a_state.path[index];
+            const auto& point = index + 1 == a_state.path.size() ? goal : a_state.path[index];
             pathDistance += std::sqrt(HorizontalDistanceSquared(previousPoint, point));
             previousPoint = point;
         }
-        auto endDirection = a_goal - (a_state.waypointIndex + 1 < a_state.path.size() ? a_state.path[a_state.path.size() - 2] : actorPosition);
+        auto endDirection = goal - (a_state.waypointIndex + 1 < a_state.path.size() ? a_state.path[a_state.path.size() - 2] : actorPosition);
         endDirection.z = 0.0F;
         (void)endDirection.Unitize();
         // The first path segment consumes distance; motion along the last segment adds or removes it, even around a corner.
         const auto followSpeed = motion.velocity.Dot(endDirection);
         const auto controlDistance = std::max(distance, pathDistance);
-        const auto excess = std::max({distance - a_maxLength, a_collarAnchor.GetDistance(a_anchor) - a_ropeLength, 0.0F});
+        const auto excess = std::max({distance - a_maxLength, attachment.GetDistance(anchor) - a_ropeLength, 0.0F});
         const auto desiredSpeed = std::max(followSpeed + (controlDistance - targetDistance) * _settings.distanceResponseRate + excess * kExcessResponseRate, 0.0F);
-        const auto runSpeed = a_actor.GetRunSpeed();
+        const auto runSpeed = actor.GetRunSpeed();
         const auto speedScale = kNormalizedRunSpeed / (std::isfinite(runSpeed) && runSpeed > 1.0F ? runSpeed : kFallbackRunSpeed);
-        auto normalizedSpeed = std::clamp(desiredSpeed * speedScale, a_hasHolder ? 0.0F : kMinimumAnchorReturnSpeed, _settings.maximumCatchUpSpeed);
+        auto normalizedSpeed = std::clamp(desiredSpeed * speedScale, hasLeader ? 0.0F : kMinimumAnchorReturnSpeed, _settings.maximumCatchUpSpeed);
         float playerCatchUpSpeed{};
         if (isPlayer) {
             float playerEffort{};
@@ -339,11 +347,11 @@ namespace LeashFramework {
                     if (const auto* camera = RE::PlayerCamera::GetSingleton(); camera && camera->cameraRoot) {
                         inputDirection = camera->cameraRoot->world.rotate * inputDirection;
                     } else {
-                        const auto heading = a_actor.GetAngleZ();
+                        const auto heading = actor.GetAngleZ();
                         inputDirection = {moveInput.x * std::cos(heading) + moveInput.y * std::sin(heading), -moveInput.x * std::sin(heading) + moveInput.y * std::cos(heading), 0.0F};
                     }
                     inputDirection.z = 0.0F;
-                    auto pathDirection = a_state.path[a_state.waypointIndex] - a_actor.GetPosition();
+                    auto pathDirection = a_state.path[a_state.waypointIndex] - actor.GetPosition();
                     pathDirection.z = 0.0F;
                     if (inputDirection.Unitize() > 0.001F && pathDirection.Unitize() > 0.001F) {
                         playerEffort = std::clamp(inputDirection.Dot(pathDirection), -1.0F, 1.0F) * inputStrength;
@@ -370,17 +378,17 @@ namespace LeashFramework {
         // Keep ownership while the moving gap contracts, rather than restarting halfway through settling.
         const auto settlingGap = !motion.moving && motion.movingBlend > 0.01F;
         a_state.idleTime = a_state.commandedSpeed <= kStoppedNormalizedSpeed && !settlingGap ? a_state.idleTime + deltaTime : 0.0F;
-        if ((!followsHolder || !motion.moving) && a_state.idleTime >= kIdleReleaseTime) {
-            LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kWaitingForSeparation, "waiting for room to follow", a_actor, distance, a_minLength, a_maxLength);
-            Release(a_state, std::addressof(a_actor), true);
+        if ((!followsLeader || !motion.moving) && a_state.idleTime >= kIdleReleaseTime) {
+            LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kWaitingForSeparation, "waiting for room to follow", actor, distance, a_minLength, a_maxLength);
+            Release(a_state, std::addressof(actor), true);
             a_state.retryDelay = kRetryDelay;
             allowNativeMovement();
             return;
         }
-        const auto& driveTarget = followsHolder && a_state.commandedSpeed <= kStoppedNormalizedSpeed ? a_actor.GetPosition() : a_state.path[a_state.waypointIndex];
-        if (!Movement::DriveDirectLocomotion(a_actor, driveTarget, a_state.commandedSpeed)) {
-            LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kDriveFailed, "direct locomotion drive failed", a_actor, distance, a_minLength, a_maxLength);
-            Release(a_state, std::addressof(a_actor));
+        const auto& driveTarget = followsLeader && a_state.commandedSpeed <= kStoppedNormalizedSpeed ? actor.GetPosition() : a_state.path[a_state.waypointIndex];
+        if (!Movement::DriveDirectLocomotion(actor, driveTarget, a_state.commandedSpeed)) {
+            LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kDriveFailed, "direct locomotion drive failed", actor, distance, a_minLength, a_maxLength);
+            Release(a_state, std::addressof(actor));
         }
     }
 
@@ -394,6 +402,7 @@ namespace LeashFramework {
     bool PullController::Release(State& a_state, RE::Actor* a_actor, bool a_keepMotion) {
         Movement::ClearLeashMovementConstraint(a_state.nativeMovementBinding);
         const auto wasActive = a_state.active;
+        const auto follower = a_state.follower;
         if (wasActive && a_actor) {
             Movement::StopDirectLocomotion(*a_actor);
             if (a_state.restorePlayerControls) {
@@ -403,7 +412,7 @@ namespace LeashFramework {
         a_state = State{.motion = a_keepMotion ? a_state.motion : MotionState{}};
         if (wasActive && a_actor) {
             if (auto* eventSource = SKSE::GetModCallbackEventSource()) {
-                const SKSE::ModCallbackEvent event{.eventName = RE::BSFixedString{"LeashFramework_OnActorStopPull"}, .strArg = {}, .numArg = 0.0F, .sender = a_actor};
+                const SKSE::ModCallbackEvent event{.eventName = RE::BSFixedString{"LeashFramework_OnActorStopPull"}, .strArg = RE::BSFixedString{GetSideName(follower)}, .numArg = 0.0F, .sender = a_actor};
                 eventSource->SendEvent(std::addressof(event));
                 SKSE::log::info("Sent LeashFramework_OnActorStopPull for {:08X}", a_actor->GetFormID());
             }

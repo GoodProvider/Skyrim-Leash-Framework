@@ -33,7 +33,7 @@ namespace LeashFramework {
             bool pendingPlayerPosition{};
         };
 
-        [[nodiscard]] bool TeleportToPlayerHolder(LeashInstance& a_leash);
+        [[nodiscard]] bool TeleportToPlayer(LeashInstance& a_leash);
         [[nodiscard]] bool Teleport(LeashInstance& a_leash, SeparationReason a_reason);
 
         LeashTeleportSettings _settings;

@@ -10,19 +10,19 @@ namespace LeashFramework {
     EquippedRope::EquippedRope(const LeashDefinition& a_definition) : _definition(a_definition) {}
 
     template <class... Args>
-    LeashAnchor::BindResult EquippedRope::Fail(std::format_string<Args...> a_reason, Args&&... a_args) {
+    BindResult EquippedRope::Fail(std::format_string<Args...> a_reason, Args&&... a_args) {
         if (!_warningLogged) {
             SKSE::log::warn("Unable to bind leash {:08X}->{:08X}: {}", _definition.holderFormID, _definition.leashedFormID, std::format(a_reason, std::forward<Args>(a_args)...));
             _warningLogged = true;
         }
-        return LeashAnchor::BindResult::kFailed;
+        return BindResult::kFailed;
     }
 
-    LeashAnchor::BindResult EquippedRope::Bind(RE::Actor& a_owner) {
+    BindResult EquippedRope::Bind(RE::Actor& a_owner) {
         auto* root = a_owner.Get3D(false);
         // Equipment changes can detach cached nodes without replacing the actor root.
         if (root && _root.get() == root && _bones.size() >= 2 && std::ranges::all_of(_bones, [&](const auto& a_bone) { return SceneGraph::IsDescendantOf(a_bone.get(), root); })) {
-            return LeashAnchor::BindResult::kUnchanged;
+            return BindResult::kUnchanged;
         }
 
         Reset();
@@ -44,7 +44,7 @@ namespace LeashFramework {
         _bones = std::move(bones);
         _warningLogged = false;
         SKSE::log::info("Bound {} leash bones containing '{}' under '{}' for {:08X}->{:08X}", _bones.size(), _definition.leashBoneMatch, parentBone, _definition.holderFormID, _definition.leashedFormID);
-        return LeashAnchor::BindResult::kChanged;
+        return BindResult::kChanged;
     }
 
     void EquippedRope::Reset() {

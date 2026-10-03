@@ -43,6 +43,8 @@ namespace LeashFramework {
         [[nodiscard]] bool SetRagdollOverride(RE::Actor* a_leashed, std::int32_t a_mode);
         [[nodiscard]] bool SetTeleportOverride(RE::Actor* a_leashed, std::int32_t a_mode);
         [[nodiscard]] bool SetPreventOverstretchOverride(RE::Actor* a_leashed, std::int32_t a_mode);
+        [[nodiscard]] std::int32_t GetFollower(RE::Actor* a_leashed) const;
+        [[nodiscard]] bool SetFollower(RE::Actor* a_leashed, std::int32_t a_follower);
         [[nodiscard]] Physics::SimulationSettings GetSimulationSettings() const;
         void SetSimulationSettings(Physics::SimulationSettings a_settings);
         [[nodiscard]] LocomotionSettings GetLocomotionSettings() const;

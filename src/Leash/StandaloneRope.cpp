@@ -20,7 +20,7 @@ namespace LeashFramework {
 
     StandaloneRope::~StandaloneRope() { Reset(); }
 
-    LeashAnchor::BindResult StandaloneRope::Bind(RE::Actor& a_leashed) {
+    BindResult StandaloneRope::Bind(RE::Actor& a_leashed) {
         auto* actorRoot = a_leashed.Get3D(false);
         auto* cell = a_leashed.GetParentCell();
         auto* loaded = cell && cell->IsAttached() ? cell->GetRuntimeData().loadedData : nullptr;
@@ -29,7 +29,7 @@ namespace LeashFramework {
         auto* attachment = actorRoot && dynamicNode ? actorRoot->GetObjectByName(RE::BSFixedString(_settings.leashedAttachment.boneName)) : nullptr;
         if (!attachment) {
             Reset();
-            return LeashAnchor::BindResult::kFailed;
+            return BindResult::kFailed;
         }
         if (_root && _actorRoot.get() == actorRoot && _attachment.get() == attachment &&
             std::ranges::all_of(_nodes, [&](const auto& a_pose) { return SceneGraph::IsDescendantOf(a_pose.object.get(), _root.get()); })) {
@@ -38,16 +38,16 @@ namespace LeashFramework {
             if (_root->parent != dynamicNode) {
                 AttachTo(*cellRoot, *dynamicNode);
             }
-            return LeashAnchor::BindResult::kUnchanged;
+            return BindResult::kUnchanged;
         }
         Reset();
         if (!Load()) {
-            return LeashAnchor::BindResult::kFailed;
+            return BindResult::kFailed;
         }
         _actorRoot.reset(actorRoot);
         _attachment.reset(attachment);
         AttachTo(*cellRoot, *dynamicNode);
-        return LeashAnchor::BindResult::kChanged;
+        return BindResult::kChanged;
     }
 
     bool StandaloneRope::Load() {

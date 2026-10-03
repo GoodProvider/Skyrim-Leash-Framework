@@ -2,25 +2,34 @@
 
 #include <memory>
 #include <optional>
-#include <span>
-#include <vector>
 
 #include "../Animation/PullPoseController.h"
 #include "../PCH.h"
-#include "../Physics/RopeSolver.h"
 #include "../Physics/SimulationSettings.h"
 #include "../Recovery/ForcedRecoveryController.h"
-#include "LeashAnchor.h"
 #include "LeashDefinition.h"
+#include "LeashEnd.h"
+#include "LeashRope.h"
+#include "LeashSide.h"
 #include "LeashTeleportController.h"
+#include "PoseRegistry.h"
 #include "PullController.h"
-#include "RopeMesh.h"
 
 namespace LeashFramework::Physics {
     class ActorBodyCollision;
 }
 
 namespace LeashFramework {
+    struct TickContext {
+        float deltaTime{};
+        const Physics::SimulationSettings& settings;
+        const Physics::ActorBodyCollision* actorCollision{};
+        const PoseRegistry& poses;
+        bool allowForcedRecovery{};
+        // False while another leash is driving this leash's follower
+        bool allowFollowerControl{};
+    };
+
     class LeashInstance {
     public:
         LeashInstance(LeashDefinition a_definition, PullController& a_pullController, Recovery::ForcedRecoveryController& a_recoveryController, Animation::PullPoseController& a_pullPoseController);
@@ -34,38 +43,43 @@ namespace LeashFramework {
         void SetRagdollOverride(std::optional<bool> a_enabled);
         void SetTeleportOverride(std::optional<bool> a_enabled);
         void SetPreventOverstretchOverride(std::optional<bool> a_enabled);
+        void SetFollower(LeashSide a_follower);
         [[nodiscard]] bool IsRagdollEnabled() const;
         [[nodiscard]] bool IsPreventOverstretchEnabled() const;
+        [[nodiscard]] bool IsControllingFollower() const;
         bool ReleasePull();
         bool ReleaseRecovery();
         bool ReleaseControl();
-        void Tick(float a_deltaTime, const Physics::SimulationSettings& a_settings, const Physics::ActorBodyCollision* a_actorCollision, bool a_allowForcedRecovery,
-            const LeashInstance* a_holderPoseSource);
+        void Tick(const TickContext& a_context);
         void FreezeSimulation();
         void ResetSimulation();
         void ApplyDeferredPose();
+        // Moves a_object with the lean this leash prepared for its leashed actor, if any
+        void TransformPreparedPose(const RE::NiAVObject& a_object, RE::NiPoint3& a_position, RE::NiMatrix3& a_rotation) const;
 
     private:
         friend class LeashTeleportController;
+        friend class PreparedLean;
 
-        struct Frame {
-            RE::NiPointer<RE::Actor> leashed;
-            RE::NiPointer<RE::Actor> holder;
-            LeashAnchor::Sample anchor;
-            RE::TESObjectCELL* pullGoalCell{};
-            bool meshChanged{};
-            bool anchorChanged{};
+        using Actors = PerSide<RE::NiPointer<RE::Actor>>;
+
+        struct Binding {
+            Actors actors;
+            bool changed{};
         };
 
-        [[nodiscard]] std::optional<Frame> Bind();
+        [[nodiscard]] std::optional<Binding> Bind();
+        [[nodiscard]] std::optional<PerSide<EndSample>> Sample(const Actors& a_actors) const;
         void Invalidate();
-        void ReadNeutralPose();
-        void TransformPreparedPose(const RE::NiAVObject& a_object, RE::NiPoint3& a_position, RE::NiMatrix3& a_rotation) const;
-        void ApplyPose(std::span<const RE::NiPoint3> a_neutralPositions, std::span<const RE::NiMatrix3> a_neutralRotations);
+        void LogExceeded(float a_distance);
+        [[nodiscard]] bool UpdateFollower(const Roles<EndSample>& a_roles, const TickContext& a_context);
+        void UpdateLeaderConstraint(const PerSide<EndSample>& a_ends, const PreparedLean& a_lean, const RE::NiPoint3& a_holderAnchor, bool a_forcedRecoveryActive);
+        [[nodiscard]] RE::NiPoint3 GetLeanReachLimit(const EndSample& a_leashedEnd, const RE::NiPoint3& a_anchor) const;
 
         LeashDefinition _definition;
-        LeashAnchor _anchor;
-        std::unique_ptr<RopeMesh> _mesh;
+        PerSide<RE::ActorHandle> _actors;
+        LeashRope _rope;
+        PerSide<std::unique_ptr<LeashEnd>> _ends;
         PullController& _pullController;
         Recovery::ForcedRecoveryController& _recoveryController;
         Animation::PullPoseController& _pullPoseController;
@@ -73,16 +87,8 @@ namespace LeashFramework {
         PullController::State _pullState;
         Recovery::ForcedRecoveryController::State _recoveryState;
         Animation::PullPoseController::State _pullPoseState;
-        RE::MovementControllerNPC* _holderMovementBinding{};
+        RE::MovementControllerNPC* _leaderMovementBinding{};
         LeashTeleportController::State _teleportState;
-        RE::ActorHandle _holder;
-        RE::ActorHandle _leashed;
-        std::vector<RE::NiPoint3> _neutralPositions;
-        std::vector<RE::NiMatrix3> _neutralRotations;
-        std::vector<float> _segmentLengths;
-        std::vector<RE::NiPoint3> _deferredTranslations;
-        std::vector<RE::NiMatrix3> _deferredRotations;
-        Physics::RopeSolver _solver;
         bool _exceeded{};
     };
 }  // namespace LeashFramework

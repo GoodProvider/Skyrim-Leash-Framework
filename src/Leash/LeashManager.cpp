@@ -148,17 +148,17 @@ namespace LeashFramework {
                 break;
             }
             case RE::PositionPlayerEvent::EVENT_TYPE::kFinish: {
-                std::size_t teleportedFollowers{};
+                std::size_t teleportedPartners{};
                 for (auto& leash : _leashes) {
                     if (_teleportController.HandlePlayerPositioned(*leash)) {
                         leash->ReleaseControl();
-                        ++teleportedFollowers;
+                        ++teleportedPartners;
                     }
                 }
                 _positioningPlayer = false;
                 _simulationSuspended = true;
-                if (teleportedFollowers > 0) {
-                    SKSE::log::info("Teleported {} leashed follower(s) after player positioning", teleportedFollowers);
+                if (teleportedPartners > 0) {
+                    SKSE::log::info("Teleported {} leash partner(s) after player positioning", teleportedPartners);
                 }
                 break;
             }
@@ -453,6 +453,31 @@ namespace LeashFramework {
 
     bool LeashManager::SetPreventOverstretchOverride(RE::Actor* a_leashed, std::int32_t a_mode) { return SetOverride(a_leashed, a_mode, &LeashInstance::SetPreventOverstretchOverride); }
 
+    std::int32_t LeashManager::GetFollower(RE::Actor* a_leashed) const {
+        if (!a_leashed) {
+            return -1;
+        }
+        const auto formID = a_leashed->GetFormID();
+        const auto leash = std::ranges::find_if(_leashes, [&](const auto& a_leash) { return a_leash->GetDefinition().leashedFormID == formID; });
+        return leash != _leashes.end() ? static_cast<std::int32_t>((*leash)->GetDefinition().follower) : -1;
+    }
+
+    bool LeashManager::SetFollower(RE::Actor* a_leashed, std::int32_t a_follower) {
+        if (!a_leashed || a_follower < 0 || a_follower > static_cast<std::int32_t>(LeashSide::kHolder)) {
+            return false;
+        }
+        const auto formID = a_leashed->GetFormID();
+        const auto leash = std::ranges::find_if(_leashes, [&](const auto& a_leash) { return a_leash->GetDefinition().leashedFormID == formID; });
+        const auto follower = static_cast<LeashSide>(a_follower);
+        // Only an actor can follow; a world anchor has none
+        if (leash == _leashes.end() || (*leash)->GetDefinition().GetFormID(follower) == 0) {
+            return false;
+        }
+        (*leash)->SetFollower(follower);
+        SKSE::log::info("Set follower of leash {:08X}->{:08X} to {}", (*leash)->GetDefinition().holderFormID, formID, GetSideName(follower));
+        return true;
+    }
+
     bool LeashManager::SetOverride(RE::Actor* a_leashed, std::int32_t a_mode, void (LeashInstance::*a_setter)(std::optional<bool>)) {
         if (!a_leashed || a_mode < -1 || a_mode > 1) {
             return false;
@@ -498,20 +523,37 @@ namespace LeashFramework {
         } else {
             _actorBodyCollision.Clear();
         }
-        // Only put poses in here after their leash has ticked. Since the list is sorted, actors farther down the train can use the pose their holder just prepared
-        std::unordered_map<RE::FormID, LeashInstance*> preparedPoses;
-        preparedPoses.reserve(_leashes.size());
+        // A holder can follow several of its leashes, so the leash already driving an actor keeps it until it lets go
+        std::unordered_map<RE::FormID, const LeashInstance*> followerControllers;
+        for (const auto& leash : _leashes) {
+            if (leash->IsControllingFollower()) {
+                const auto& definition = leash->GetDefinition();
+                followerControllers.try_emplace(definition.GetFormID(definition.follower), leash.get());
+            }
+        }
+        // Only publish a lean after its leash has ticked. Since the list is sorted, actors farther down the train can use the pose their holder just prepared
+        PoseRegistry poses;
+        poses.Reserve(_leashes.size());
         for (auto& leash : _leashes) {
             const auto& definition = leash->GetDefinition();
-            const auto holderPose = preparedPoses.find(definition.holderFormID);
-            const auto* holderPoseSource = holderPose != preparedPoses.end() ? holderPose->second : nullptr;
+            const auto followerFormID = definition.GetFormID(definition.follower);
+            const auto followerController = followerControllers.find(followerFormID);
+            const auto allowFollowerControl = followerController == followerControllers.end() || followerController->second == leash.get();
             const auto teleportResult = _teleportController.Update(*leash, a_deltaTime);
             if (teleportResult == LeashTeleportController::UpdateResult::kTeleported) {
                 leash->ReleaseControl();
             } else {
-                leash->Tick(a_deltaTime, _settings, actorCollision, teleportResult != LeashTeleportController::UpdateResult::kPending, holderPoseSource);
+                leash->Tick({.deltaTime = a_deltaTime,
+                    .settings = _settings,
+                    .actorCollision = actorCollision,
+                    .poses = poses,
+                    .allowForcedRecovery = teleportResult != LeashTeleportController::UpdateResult::kPending,
+                    .allowFollowerControl = allowFollowerControl});
             }
-            preparedPoses.insert_or_assign(definition.leashedFormID, leash.get());
+            if (allowFollowerControl && leash->IsControllingFollower()) {
+                followerControllers.try_emplace(followerFormID, leash.get());
+            }
+            poses.Publish(definition.leashedFormID, *leash);
         }
         if (actorCollision && UI::ModMenu::IsActorCollisionDebugEnabled()) {
             _actorBodyCollision.DrawDebug();
@@ -678,7 +720,8 @@ namespace LeashFramework {
             },
             a_definition.anchor);
         // A standalone NIF can keep its rope bones directly below its root
-        return validAnchor && a_definition.leashedFormID != 0 && a_definition.holderFormID != a_definition.leashedFormID && (standalone || !a_definition.parentBone.empty()) &&
+        return validAnchor && a_definition.leashedFormID != 0 && a_definition.holderFormID != a_definition.leashedFormID && a_definition.GetFormID(a_definition.follower) != 0 &&
+               (standalone || !a_definition.parentBone.empty()) &&
                !a_definition.leashBoneMatch.empty() && std::isfinite(a_definition.minLength) && std::isfinite(a_definition.maxLength) && a_definition.minLength >= 0.0F &&
                a_definition.maxLength >= a_definition.minLength && a_definition.maxLength > 0.0F;
     }

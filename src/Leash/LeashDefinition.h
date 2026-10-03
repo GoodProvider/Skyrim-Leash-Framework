@@ -5,6 +5,8 @@
 #include <string>
 #include <variant>
 
+#include "LeashSide.h"
+
 namespace LeashFramework {
     enum class ClosedHand : std::uint8_t { kNone, kRight, kLeft };
 
@@ -58,7 +60,20 @@ namespace LeashFramework {
         float maxLength{};
         bool persistent{};
         LeashOverrides overrides{};
+        // The side that gets pulled; the other side leads. Procedural lean always stays on the leashed actor.
+        LeashSide follower{LeashSide::kLeashed};
 
         [[nodiscard]] bool HolderOwnsMesh() const { return std::holds_alternative<HolderMesh>(mesh); }
+        // The side that carries rope bone 0
+        [[nodiscard]] LeashSide GetMeshSide() const { return HolderOwnsMesh() ? LeashSide::kHolder : LeashSide::kLeashed; }
+        [[nodiscard]] std::uint32_t GetFormID(LeashSide a_side) const { return a_side == LeashSide::kHolder ? holderFormID : leashedFormID; }
+        [[nodiscard]] std::optional<LeashSide> FindSide(std::uint32_t a_formID) const {
+            for (const auto side : kLeashSides) {
+                if (a_formID != 0 && GetFormID(side) == a_formID) {
+                    return side;
+                }
+            }
+            return std::nullopt;
+        }
     };
 }  // namespace LeashFramework

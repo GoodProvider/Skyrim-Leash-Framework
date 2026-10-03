@@ -22,10 +22,13 @@ Pull mod events:
   settling, interruption, and leash cleanup. Forced ragdoll recovery may take over afterward.
 - LeashFramework_OnActorRagdollPulled: sent once when forced ragdoll pulling starts.
 
-Register for these events with RegisterForModEvent. All pull events use the leashed Actor as sender and leave
-strArg empty. The two start events provide the holder/anchor-to-collar distance at the transition in numArg;
-OnActorStopPull uses 0.0. Events are sent only on transitions, not every frame. Releasing an inactive pull
-does not send OnActorStopPull, and no stop event is sent if the leashed Actor can no longer be resolved.
+Register for these events with RegisterForModEvent. All pull events use the pulled Actor as sender. That is
+the leashed Actor by default, or the holder when SetLeashFollower makes the holder follow. Only the leashed
+Actor is ever ragdolled, so OnActorRagdollPulled always comes from it. strArg names the pulled side:
+"leashed" or "holder". The two start events provide the distance between the pulled Actor's
+leash attachment and the actor or anchor it follows at the transition in numArg; OnActorStopPull uses 0.0.
+Events are sent only on transitions, not every frame. Releasing an inactive pull does not send
+OnActorStopPull, and no stop event is sent if the pulled Actor can no longer be resolved.
 /;
 
 ;/
@@ -38,9 +41,9 @@ cleanup can all end an active pull. Repeated cleanup calls do not send duplicate
 
 The callback receives:
 - eventName: "LeashFramework_OnActorStopPull".
-- strArg: "" (no stop reason is supplied).
+- strArg: "leashed" or "holder", naming which side of the leash was being pulled (no stop reason is supplied).
 - numArg: 0.0 (no distance is supplied).
-- sender: The leashed Actor, received as a Form; cast it to Actor.
+- sender: The pulled Actor, received as a Form; cast it to Actor. This is the leashed Actor unless the holder follows.
 
 The leash may still be attached after this event, and pulling can start again later. The event marks the
 end of normal pulling; it does not report the end of ragdoll recovery or guarantee that the actor can walk
@@ -53,8 +56,8 @@ Event OnInit()
 EndEvent
 
 Event OnLeashActorStopPull(String eventName, String strArg, Float numArg, Form sender)
-    Actor leashed = sender as Actor
-    If leashed
+    Actor pulled = sender as Actor
+    If pulled
         ; Clear your normal-pull effects or state for this actor here.
     EndIf
 EndEvent
@@ -242,7 +245,8 @@ Returns false when leashed has no active leash or newLength is invalid.
 Bool Function SetMaxLeashLength(Actor leashed, Float newLength) Global Native
 
 ;/
-Overrides forced ragdoll recovery for leashed's active leash, for either a player or NPC.
+Overrides forced ragdoll recovery for leashed's active leash, for either a player or NPC. Only the leashed
+actor is ever ragdolled, so this has no effect while SetLeashFollower makes the holder follow.
 
 mode: -1 uses the current player/NPC config setting, 0 disables recovery, and 1 enables it.
 Enabling still respects actor restrictions and recovery eligibility. Disabling releases the framework's
@@ -257,8 +261,8 @@ Bool Function SetRagdollOverride(Actor leashed, Int mode = -1) Global Native
 Overrides teleport recovery for leashed's active leash, for either a player or NPC.
 
 mode: -1 uses current config/default behavior, 0 disables all leash teleport handling, and 1 enables it.
-This covers both following a player holder after positioning and separation recovery for NPC holders.
-For NPC holders, mode 1 uses the configured player/NPC extra distance when positive, or the default
+This covers both bringing the other actor to the player after positioning and separation recovery for NPC
+leaders. For NPC leaders, mode 1 uses the configured player/NPC extra distance when positive, or the default
 2,048 units when the configured distance is 0 or less. Grace time still comes from the config.
 Enabling still respects actor restrictions, holderless anchors, and the minLength > 99,999 disable rule.
 Changing the override clears pending teleport recovery.
@@ -278,11 +282,40 @@ can still move toward or around the leashed actor. The limit uses the rope's act
 room for the leashed actor to lean, and includes the menu's "Holder stretch allowance". It is separate
 from maxLength, which controls when the leashed actor is pulled.
 
-This has no effect on leashes tied to a world position or while the leashed actor is being dragged by
-forced recovery. If the holder has other leashes, those can still limit its movement.
+This has no effect on leashes tied to a world position or while the follower is being dragged by forced
+recovery. If the holder has other leashes, those can still limit its movement. When SetLeashFollower makes
+the holder follow, this limits the leashed actor's movement instead, since it leads.
 
 The choice lasts until this leash is replaced or disconnected and is saved only with persistent leashes.
 Use mode -1 to follow the menu setting again. Returns false if leashed has no active leash or mode is
 not -1, 0, or 1.
 /;
 Bool Function SetPreventOverstretchOverride(Actor leashed, Int mode = -1) Global Native
+
+;/
+Returns which side of leashed's active leash follows (is pulled by) the other.
+
+0: The leashed actor follows the holder or world anchor. This is the default.
+1: The holder follows the leashed actor, as when walking a dog.
+Returns -1 when leashed has no active leash.
+/;
+Int Function GetLeashFollower(Actor leashed) Global Native
+
+;/
+Chooses which side of leashed's active leash follows the other. Pass the leashed actor, not the holder.
+
+follower: 0 makes the leashed actor follow the holder (default). 1 makes the holder follow the leashed actor.
+Only movement roles change. Pulling, following, and teleport recovery act on the follower. Forced ragdoll
+recovery only ever applies to the leashed actor, so it is off while the holder follows. "Prevent holder overstretch" limits whichever actor leads. Procedural leaning stays on the leashed
+actor. Factions, queries, OnLeash/OnUnleash, and which actor wears the rope are unaffected. Pull events use
+the follower as sender.
+
+Teleport recovery moves the follower to an NPC leader. When the player is positioned (fast travel, doors,
+etc.), the other actor on the leash is always brought to the player, whichever side the player is on.
+
+Changing the follower releases any active pull, ragdoll recovery, lean, and pending teleport recovery for this
+leash. The choice lasts until this leash is replaced or disconnected and is saved only with persistent leashes.
+Returns false if leashed has no active leash, follower is not 0 or 1, or follower is 1 for a leash tied to a
+world position.
+/;
+Bool Function SetLeashFollower(Actor leashed, Int follower) Global Native

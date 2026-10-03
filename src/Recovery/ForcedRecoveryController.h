@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Leash/LeashEnd.h"
 #include "../PCH.h"
 #include "RagdollHold.h"
 
@@ -38,8 +39,9 @@ namespace LeashFramework::Recovery {
             bool interruptingGetUp{};
         };
 
-        [[nodiscard]] bool Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, const RE::NiPoint3& a_source, float a_maxLength, float a_deltaTime,
-            bool a_enabled);
+        // Ragdolls and drags the follower toward the leader's end once it strays too far
+        [[nodiscard]] bool Update(State& a_state, LeashSide a_followerSide, const Roles<EndSample>& a_roles, float a_maxLength, float a_deltaTime, bool a_enabled);
+        [[nodiscard]] static bool IsControlling(const State& a_state) noexcept { return a_state.mode != Mode::kInactive && a_state.mode != Mode::kCooldown; }
         bool Release(State& a_state);
         void BeginRecovery(State& a_state);
         void BeginCooldown(State& a_state);

@@ -110,6 +110,10 @@ namespace LeashFramework::Papyrus {
         bool SetTeleportOverride(RE::StaticFunctionTag*, RE::Actor* a_leashed, std::int32_t a_mode) { return LeashManager::GetSingleton().SetTeleportOverride(a_leashed, a_mode); }
 
         bool SetPreventOverstretchOverride(RE::StaticFunctionTag*, RE::Actor* a_leashed, std::int32_t a_mode) { return LeashManager::GetSingleton().SetPreventOverstretchOverride(a_leashed, a_mode); }
+
+        std::int32_t GetLeashFollower(RE::StaticFunctionTag*, RE::Actor* a_leashed) { return LeashManager::GetSingleton().GetFollower(a_leashed); }
+
+        bool SetLeashFollower(RE::StaticFunctionTag*, RE::Actor* a_leashed, std::int32_t a_follower) { return LeashManager::GetSingleton().SetFollower(a_leashed, a_follower); }
     }  // namespace
 
     bool Register(RE::BSScript::IVirtualMachine* a_vm) {
@@ -138,6 +142,8 @@ namespace LeashFramework::Papyrus {
         a_vm->RegisterFunction("SetRagdollOverride", kScriptName, SetRagdollOverride);
         a_vm->RegisterFunction("SetTeleportOverride", kScriptName, SetTeleportOverride);
         a_vm->RegisterFunction("SetPreventOverstretchOverride", kScriptName, SetPreventOverstretchOverride);
+        a_vm->RegisterFunction("GetLeashFollower", kScriptName, GetLeashFollower);
+        a_vm->RegisterFunction("SetLeashFollower", kScriptName, SetLeashFollower);
         SKSE::log::info("Registered {} Papyrus API", kScriptName);
         return true;
     }

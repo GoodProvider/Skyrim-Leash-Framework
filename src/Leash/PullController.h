@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "../PCH.h"
+#include "LeashEnd.h"
 
 namespace LeashFramework {
     struct LocomotionSettings {
@@ -51,11 +52,13 @@ namespace LeashFramework {
             float commandedSpeed{};
             float idleTime{};
             float retryDelay{};
+            LeashSide follower{};
             bool active{};
             bool restorePlayerControls{};
         };
 
-        void Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, float a_ropeLength, const RE::NiPoint3& a_goal, RE::TESObjectCELL* a_goalCell, bool a_hasHolder, float a_minLength, float a_maxLength, float a_deltaTime);
+        // Drives the follower toward the leader's actor, or toward a world anchor when the leader has no actor
+        void Update(State& a_state, LeashSide a_followerSide, const Roles<EndSample>& a_roles, float a_ropeLength, float a_minLength, float a_maxLength, float a_deltaTime);
         void ResetMotion(State& a_state);
         bool Release(State& a_state, RE::Actor* a_actor, bool a_keepMotion = false);
 

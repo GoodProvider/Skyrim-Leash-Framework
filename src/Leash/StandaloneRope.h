@@ -13,7 +13,7 @@ namespace LeashFramework {
         explicit StandaloneRope(const LeashDefinition& a_definition);
         ~StandaloneRope() override;
 
-        [[nodiscard]] LeashAnchor::BindResult Bind(RE::Actor& a_leashed) override;
+        [[nodiscard]] BindResult Bind(RE::Actor& a_leashed) override;
         void Reset() override;
         void PoseNeutral() override;
         void PoseFrame(const RE::NiPoint3& a_position, const RE::NiMatrix3& a_rotation) override;

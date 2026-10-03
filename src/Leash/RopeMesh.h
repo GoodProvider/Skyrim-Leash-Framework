@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "../PCH.h"
-#include "LeashAnchor.h"
+#include "BindResult.h"
 
 namespace LeashFramework {
     // The skinned rope a leash simulates. Bone 0 is the end carried by the mesh owner.
@@ -18,7 +18,7 @@ namespace LeashFramework {
         virtual ~RopeMesh() = default;
 
         // kChanged means the bones differ from the previous call, so anything computed for them is stale.
-        [[nodiscard]] virtual LeashAnchor::BindResult Bind(RE::Actor& a_owner) = 0;
+        [[nodiscard]] virtual BindResult Bind(RE::Actor& a_owner) = 0;
         virtual void Reset() = 0;
         // Poses the parts animation doesn't drive before the neutral pose is sampled.
         virtual void PoseNeutral() {}

@@ -12,7 +12,7 @@ namespace LeashFramework {
     public:
         explicit EquippedRope(const LeashDefinition& a_definition);
 
-        [[nodiscard]] LeashAnchor::BindResult Bind(RE::Actor& a_owner) override;
+        [[nodiscard]] BindResult Bind(RE::Actor& a_owner) override;
         void Reset() override;
         void UpdateWorldBounds() override;
         [[nodiscard]] const RE::NiAVObject& GetPoseReference(std::size_t a_index) const override { return *_bones[a_index]; }
@@ -20,7 +20,7 @@ namespace LeashFramework {
 
     private:
         template <class... Args>
-        [[nodiscard]] LeashAnchor::BindResult Fail(std::format_string<Args...> a_reason, Args&&... a_args);
+        [[nodiscard]] BindResult Fail(std::format_string<Args...> a_reason, Args&&... a_args);
 
         const LeashDefinition& _definition;
         RE::NiPointer<RE::NiAVObject> _root;

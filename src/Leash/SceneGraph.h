@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <string_view>
 #include <vector>
 
@@ -28,6 +30,33 @@ namespace LeashFramework::SceneGraph {
             });
         }
         return bones;
+    }
+
+    struct ResolvedNode {
+        RE::NiAVObject* root{};
+        RE::NiAVObject* object{};
+    };
+
+    [[nodiscard]] inline ResolvedNode ResolveActorNode(RE::Actor& a_actor, std::string_view a_name) {
+        std::array<RE::NiAVObject*, 3> roots{a_actor.Get3D()};
+        if (a_actor.IsPlayerRef()) {
+            roots[1] = a_actor.Get3D(false);
+            roots[2] = a_actor.Get3D(true);
+        }
+
+        RE::NiAVObject* firstRoot{};
+        for (std::size_t index = 0; index < roots.size(); ++index) {
+            auto* root = roots[index];
+            const auto previousEnd = roots.begin() + static_cast<std::ptrdiff_t>(index);
+            if (!root || std::ranges::find(roots.begin(), previousEnd, root) != previousEnd) {
+                continue;
+            }
+            firstRoot = firstRoot ? firstRoot : root;
+            if (auto* object = root->GetObjectByName(RE::BSFixedString(a_name))) {
+                return {.root = root, .object = object};
+            }
+        }
+        return {.root = firstRoot};
     }
 
     inline void UpdateWorldBoundsUpward(RE::NiAVObject* a_object) {

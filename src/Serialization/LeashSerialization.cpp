@@ -30,6 +30,12 @@ struct glz::meta<LeashFramework::ClosedHand> {
     static constexpr auto value = glz::enumerate("none", kNone, "right", kRight, "left", kLeft);
 };
 
+template <>
+struct glz::meta<LeashFramework::LeashSide> {
+    using enum LeashFramework::LeashSide;
+    static constexpr auto value = glz::enumerate("leashed", kLeashed, "holder", kHolder);
+};
+
 namespace LeashFramework::Serialization {
     struct SavedState {
         std::vector<LeashDefinition> leashes;
